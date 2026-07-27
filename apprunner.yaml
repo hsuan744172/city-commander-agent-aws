@@ -1,0 +1,20 @@
+# AWS App Runner 部署設定
+# 使用方式：aws apprunner create-service --cli-input-json file://apprunner-config.json
+# 或透過 Console 指定 source 為此 repo 的 backend/Dockerfile
+
+version: 1.0
+runtime: python313
+build:
+  commands:
+    build:
+      - pip install -r backend/requirements.txt
+  env:
+    - name: APP_AWS_REGION
+      value: "us-west-2"
+run:
+  command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+  network:
+    port: 8000
+  env:
+    - name: APP_AWS_REGION
+      value: "us-west-2"

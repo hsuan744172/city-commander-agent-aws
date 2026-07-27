@@ -1,0 +1,58 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ===== Node / Frontend =====
+node_modules/
+dist/
+.next/
+.nuxt/
+*.tsbuildinfo
+
+# ===== Environment & Secrets =====
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ===== Docker =====
+docker-compose.override.yml
+
+# ===== AWS =====
+.aws-sam/
+samconfig.toml
+cdk.out/
+
+# ===== Misc =====
+*.log
+*.tmp
+*.bak

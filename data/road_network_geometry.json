@@ -1,0 +1,137 @@
+[
+  {
+    "segment_id": "RD_TPE_001",
+    "name": "忠孝東路四段",
+    "flow_direction": "東西向",
+    "intersections": ["延吉街", "光復南路", "基隆路一段"],
+    "capacity_vph": 3000,
+    "alternatives": ["RD_TPE_004", "RD_TPE_005", "RD_TPE_007"],
+    "nearby_stations": ["BS_TPE_DOME", "BS_MRT_BL17", "BS_MRT_BL16", "BS_MRT_BL18"]
+  },
+  {
+    "segment_id": "RD_TPE_002",
+    "name": "光復南路",
+    "flow_direction": "南北向 (事故影響南下車流)",
+    "intersections": ["市民大道四段", "忠孝東路四段", "仁愛路四段"],
+    "capacity_vph": 1800,
+    "alternatives": ["RD_TPE_004", "RD_TPE_005", "RD_TPE_006", "RD_TPE_008"],
+    "nearby_stations": ["BS_TPE_DOME", "BS_MRT_BL17", "BS_SS_PARK"]
+  },
+  {
+    "segment_id": "RD_TPE_003",
+    "name": "基隆路一段",
+    "flow_direction": "南北向",
+    "intersections": ["忠孝東路四段", "松高路", "信義路五段"],
+    "capacity_vph": 3500,
+    "alternatives": ["RD_TPE_006", "RD_TPE_009"],
+    "nearby_stations": []
+  },
+  {
+    "segment_id": "RD_TPE_004",
+    "name": "市民大道四段",
+    "flow_direction": "東西向",
+    "intersections": ["復興南路一段", "敦化南路一段", "光復南路"],
+    "capacity_vph": 2500,
+    "alternatives": ["RD_TPE_001", "RD_TPE_006"],
+    "nearby_stations": ["BS_SS_PARK"]
+  },
+  {
+    "segment_id": "RD_TPE_005",
+    "name": "仁愛路四段",
+    "flow_direction": "東西向",
+    "intersections": ["敦化南路一段", "光復南路", "市府路"],
+    "capacity_vph": 4000,
+    "alternatives": ["RD_TPE_001", "RD_TPE_010"],
+    "nearby_stations": []
+  },
+  {
+    "segment_id": "RD_TPE_006",
+    "name": "敦化南路一段",
+    "flow_direction": "南北向",
+    "intersections": ["市民大道四段", "忠孝東路四段", "仁愛路四段"],
+    "capacity_vph": 3200,
+    "alternatives": ["RD_TPE_002", "RD_TPE_004", "RD_TPE_008"],
+    "nearby_stations": ["BS_MRT_BL16"]
+  },
+  {
+    "segment_id": "RD_TPE_007",
+    "name": "松高路",
+    "flow_direction": "東西向",
+    "intersections": ["基隆路一段", "市府路", "松智路"],
+    "capacity_vph": 1200,
+    "alternatives": ["RD_TPE_011"],
+    "nearby_stations": ["BS_BUS_TERM", "BS_XY_VIESHOW"]
+  },
+  {
+    "segment_id": "RD_TPE_008",
+    "name": "延吉街",
+    "flow_direction": "南北向",
+    "intersections": ["忠孝東路四段", "仁愛路四段"],
+    "capacity_vph": 600,
+    "alternatives": ["RD_TPE_002"],
+    "nearby_stations": []
+  },
+  {
+    "segment_id": "RD_TPE_009",
+    "name": "基隆路地下道",
+    "flow_direction": "南北向",
+    "intersections": ["忠孝東路四段", "正氣橋"],
+    "capacity_vph": 2800,
+    "alternatives": ["RD_TPE_003"],
+    "nearby_stations": []
+  },
+  {
+    "segment_id": "RD_TPE_010",
+    "name": "市府路",
+    "flow_direction": "南北向",
+    "intersections": ["仁愛路四段", "松高路", "松壽路"],
+    "capacity_vph": 2000,
+    "alternatives": ["RD_TPE_003", "RD_TPE_011"],
+    "nearby_stations": ["BS_MRT_BL18", "BS_BUS_TERM"]
+  },
+  {
+    "segment_id": "RD_TPE_011",
+    "name": "松壽路",
+    "flow_direction": "東西向",
+    "intersections": ["基隆路一段", "市府路", "松智路"],
+    "capacity_vph": 1500,
+    "alternatives": ["RD_TPE_007", "RD_TPE_010"],
+    "nearby_stations": ["BS_XY_VIESHOW", "BS_XY_ATT"]
+  },
+  {
+    "segment_id": "RD_TPE_012",
+    "name": "敦化南路二段",
+    "flow_direction": "南北向",
+    "intersections": ["仁愛路四段", "信義路五段"],
+    "capacity_vph": 3200,
+    "alternatives": ["RD_TPE_006"],
+    "nearby_stations": []
+  },
+  {
+    "segment_id": "RD_TPE_013",
+    "name": "信義路五段",
+    "flow_direction": "東西向",
+    "intersections": ["基隆路一段", "市府路", "松智路"],
+    "capacity_vph": 3800,
+    "alternatives": ["RD_TPE_005"],
+    "nearby_stations": ["BS_TPE_101"]
+  },
+  {
+    "segment_id": "RD_TPE_014",
+    "name": "松智路",
+    "flow_direction": "南北向",
+    "intersections": ["松高路", "松壽路", "信義路五段"],
+    "capacity_vph": 1000,
+    "alternatives": ["RD_TPE_010"],
+    "nearby_stations": ["BS_XY_ATT", "BS_TPE_101"]
+  },
+  {
+    "segment_id": "RD_TPE_015",
+    "name": "復興南路一段",
+    "flow_direction": "南北向",
+    "intersections": ["市民大道四段", "忠孝東路四段"],
+    "capacity_vph": 2800,
+    "alternatives": ["RD_TPE_006"],
+    "nearby_stations": []
+  }
+]
