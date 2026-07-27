@@ -17,6 +17,7 @@ build/
 htmlcov/
 .coverage
 coverage.xml
+docs/
 
 # ===== Node / Frontend =====
 node_modules/
