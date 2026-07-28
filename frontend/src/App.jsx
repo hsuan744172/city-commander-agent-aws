@@ -1,75 +1,60 @@
-import { useState, useCallback } from "react";
-import Header from "./components/Header";
-import TrafficStatusBar from "./components/TrafficStatusBar";
-import AlertBanner from "./components/AlertBanner";
-import IncidentPanel from "./components/IncidentPanel";
-import AdvisoryReport from "./components/AdvisoryReport";
-import ChatPanel from "./components/ChatPanel";
-import CMSPanel from "./components/CMSPanel";
+import { useState } from "react";
+import { Shield, BarChart3, FileText, Bot } from "lucide-react";
+import DashboardTab from "./components/DashboardTab";
+import IncidentTab from "./components/IncidentTab";
+import ChatTab from "./components/ChatTab";
 
-const API_BASE = "/api";
+const TABS = [
+  { id: "dashboard", label: "即時儀表板", icon: BarChart3 },
+  { id: "incidents", label: "事件處置與建議書", icon: FileText },
+  { id: "chat", label: "AI 策略顧問", icon: Bot },
+];
 
 export default function App() {
-  const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [alert, setAlert] = useState(null);
-
-  const handleInject = useCallback(async (incidents) => {
-    setLoading(true);
-    setAlert(null);
-    try {
-      const res = await fetch(`${API_BASE}/incidents`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ incidents }),
-      });
-      const data = await res.json();
-      setReport(data);
-
-      // 自動彈出警報
-      if (data.advisories?.length > 0) {
-        const adv = data.advisories[0];
-        if (adv.traffic_classification?.max_level === "A") {
-          setAlert({ level: "A", summary: adv.summary, event_id: adv.event_id });
-        } else if (adv.traffic_classification?.max_level === "B") {
-          setAlert({ level: "B", summary: adv.summary, event_id: adv.event_id });
-        }
-      }
-    } catch (e) {
-      setAlert({ level: "error", summary: e.message });
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [activeTab, setActiveTab] = useState("dashboard");
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <Header />
-      <AlertBanner alert={alert} onDismiss={() => setAlert(null)} />
-
-      <div className="p-4 space-y-4">
-        {/* 模組一：即時路網狀態 */}
-        <TrafficStatusBar />
-
-        <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
-          {/* 左側：事件注入 + 建議書 */}
-          <div className="xl:col-span-3 space-y-4">
-            {/* 模組二：事件注入 */}
-            <IncidentPanel onInject={handleInject} loading={loading} />
-
-            {/* 模組二：建議書 */}
-            {report && <AdvisoryReport report={report} />}
-
-            {/* 模組五：多語通報 */}
-            {report && <CMSPanel report={report} />}
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
+      {/* Global Header */}
+      <header className="bg-gray-900 border-b border-gray-800 px-6 py-3">
+        <div className="max-w-[1600px] mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-600 p-2 rounded-lg">
+              <Shield className="w-5 h-5 text-white" />
+            </div>
+            <h1 className="text-lg font-bold text-white">城市應變指揮官</h1>
           </div>
 
-          {/* 右側：模組三四 AI 對話 */}
-          <div className="xl:col-span-1">
-            <ChatPanel />
-          </div>
+          {/* Tab Navigation */}
+          <nav className="flex gap-1">
+            {TABS.map((tab) => {
+              const Icon = tab.icon;
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                    active
+                      ? "bg-blue-600 text-white"
+                      : "text-gray-400 hover:text-white hover:bg-gray-800"
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </nav>
         </div>
-      </div>
+      </header>
+
+      {/* Tab Content */}
+      <main className="flex-1 p-4 max-w-[1600px] mx-auto w-full">
+        {activeTab === "dashboard" && <DashboardTab />}
+        {activeTab === "incidents" && <IncidentTab />}
+        {activeTab === "chat" && <ChatTab />}
+      </main>
     </div>
   );
 }
