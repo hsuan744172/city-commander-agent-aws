@@ -91,11 +91,25 @@ def run_comms(task_payload: dict) -> dict:
         or "號誌故障" in (incident.get("description") or "")
         or "號誌失效" in (incident.get("description") or "")
     )
+    is_crowd_event = (incident.get("affected_segment") or "").startswith("BS_")
 
     if is_signal_failure:
+        # SOP 第 5 條：號誌故障 CMS
         road_name = routing_result.get("incident_name") or incident.get("location") or ""
         messages = generate_signal_failure_messages(road_name, languages)
+    elif is_crowd_event:
+        # SOP 第 3 條：人流事件不產出車流通報，改為捷運分流提示
+        location = incident.get("location") or incident.get("affected_segment") or ""
+        messages = [{
+            "language": lang,
+            "message": f"「{location} 人潮壅擠，建議改至市政府站 (BL18) 搭乘，請配合現場引導」" if lang == "zh-TW"
+                else f"「Crowding at {location}. Please use City Hall Station (BL18) instead.」" if lang == "en"
+                else f"「{location}付近混雑。市政府駅(BL18)をご利用ください。」" if lang == "ja"
+                else f"「{location} 혼잡. 시청역(BL18)을 이용해주세요.」",
+            "template_used": "捷運分流範本",
+        } for lang in languages]
     else:
+        # SOP 第 2 條：車禍路障 CMS
         incident_road = routing_result.get("incident_name") or incident.get("location") or ""
         route_rec = routing_result.get("route_recommendation") or {}
         primary_route = route_rec.get("primary_route_name", "") if isinstance(route_rec, dict) else ""
