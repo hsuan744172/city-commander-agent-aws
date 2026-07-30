@@ -112,9 +112,13 @@ async def health():
 
 
 @app.get("/api/status")
-async def traffic_status():
-    """回傳路網即時狀態 — 取有最多路段資料的最新時間點。"""
+async def traffic_status_with_routing():
+    """
+    回傳路網即時狀態。
+    SOP 第 1 條：達 A 級時自動觸發第 2 條替代路徑引導。
+    """
     import pandas as pd
+    from backend.agents.traffic_math import calculate_optimal_route, calculate_ete
 
     csv_path = DATA_DIR / "city_traffic_flow.csv"
     if not csv_path.exists():
@@ -127,10 +131,10 @@ async def traffic_status():
         return f / 100 if f > 1 else f
     df["Saturation_Score"] = df["Saturation_Score"].apply(_pct)
 
-    # 找出涵蓋最多路段的最新時間點 (避免選到只有 1 筆的時間)
     ts_counts = df.groupby("Timestamp").size()
     best_ts = ts_counts[ts_counts == ts_counts.max()].index.max()
     latest = df[df["Timestamp"] == best_ts]
+    ts_str = best_ts.strftime("%Y-%m-%d %H:%M")
 
     segments = []
     for _, row in latest.iterrows():
@@ -146,7 +150,43 @@ async def traffic_status():
             "level": level,
         })
 
-    return {"timestamp": best_ts.strftime("%Y-%m-%d %H:%M"), "total_segments": len(segments), "segments": segments}
+    # SOP 第 1 條 → A 級自動觸發第 2 條替代路徑
+    a_level_segments = [s for s in segments if s["level"] == "A"]
+    auto_advisories = []
+
+    for seg in a_level_segments:
+        seg_id = seg["segment_id"]
+        try:
+            route = calculate_optimal_route(seg_id, ts_str)
+            primary = (route or {}).get("primary_route")
+            ete_data = calculate_ete("Critical", [seg_id], ts_str)
+
+            advisory = {
+                "triggered_by": f"{seg['road_name']} 達 A 級癱瘓（飽和度 {round(seg['saturation_score'] * 100)}%）",
+                "sop_reference": "SOP 第 1 條 → 同步觸發第 2 條替代路徑引導",
+                "segment_id": seg_id,
+                "road_name": seg["road_name"],
+            }
+
+            if primary and isinstance(primary, dict):
+                advisory["primary_route"] = primary.get("name", "")
+                advisory["primary_saturation"] = primary.get("saturation_score", 0)
+                advisory["selection_reason"] = (route or {}).get("selection_reason", "")
+                advisory["signal_action"] = f"{primary.get('name', '')} 綠燈配時 +25%"
+
+            if ete_data and "ete_minutes" in ete_data:
+                advisory["ete_minutes"] = ete_data["ete_minutes"]
+
+            auto_advisories.append(advisory)
+        except Exception:
+            pass
+
+    return {
+        "timestamp": ts_str,
+        "total_segments": len(segments),
+        "segments": segments,
+        "auto_advisories": auto_advisories,
+    }
 
 
 @app.get("/api/trend")
