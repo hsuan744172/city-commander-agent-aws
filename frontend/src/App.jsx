@@ -14,15 +14,15 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
+    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
       {/* Global Header */}
-      <header className="bg-gray-900 border-b border-gray-800 px-6 py-3">
+      <header className="bg-white border-b border-gray-200 px-6 py-3 shadow-sm">
         <div className="max-w-[1600px] mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="bg-blue-600 p-2 rounded-lg">
               <Shield className="w-5 h-5 text-white" />
             </div>
-            <h1 className="text-lg font-bold text-white">城市應變指揮官</h1>
+            <h1 className="text-lg font-bold text-gray-900">城市應變指揮官</h1>
           </div>
 
           {/* Tab Navigation */}
@@ -37,7 +37,7 @@ export default function App() {
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
                     active
                       ? "bg-blue-600 text-white"
-                      : "text-gray-400 hover:text-white hover:bg-gray-800"
+                      : "text-gray-500 hover:text-gray-900 hover:bg-gray-100"
                   }`}
                 >
                   <Icon className="w-4 h-4" />

@@ -10,8 +10,8 @@ const COLORS = ["#EF4444", "#F59E0B", "#3B82F6", "#10B981", "#8B5CF6", "#EC4899"
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-gray-900 border border-gray-700 rounded-lg p-3 shadow-xl min-w-[180px]">
-      <div className="text-xs text-gray-400 mb-2 font-medium">{label}</div>
+    <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-xl min-w-[180px]">
+      <div className="text-xs text-gray-500 mb-2 font-medium">{label}</div>
       <div className="space-y-1">
         {payload
           .filter((p) => p.value != null)
@@ -23,9 +23,9 @@ function CustomTooltip({ active, payload, label }) {
               <div key={i} className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }} />
-                  <span className="text-xs text-gray-300">{p.name}</span>
+                  <span className="text-xs text-gray-700">{p.name}</span>
                 </div>
-                <span className="text-xs font-bold text-gray-100">{icon} {pct}%</span>
+                <span className="text-xs font-bold text-gray-800">{icon} {pct}%</span>
               </div>
             );
           })}
@@ -47,14 +47,14 @@ export default function TrendChart({ selectedSegments, onRemove }) {
   const hasSelection = selectedSegments?.length > 0;
 
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 p-5">
+    <div className="bg-white rounded-xl border border-gray-200 p-5">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <TrendingUp className="w-5 h-5 text-blue-400" />
-          <h2 className="text-sm font-semibold text-gray-200">飽和度趨勢圖</h2>
+          <h2 className="text-sm font-semibold text-gray-800">飽和度趨勢圖</h2>
         </div>
         {!hasSelection && (
-          <span className="text-xs text-gray-500">← 點擊上方路段卡片加入監測</span>
+          <span className="text-xs text-gray-400">← 點擊上方路段卡片加入監測</span>
         )}
       </div>
 
@@ -64,7 +64,7 @@ export default function TrendChart({ selectedSegments, onRemove }) {
           {selectedSegments.map((seg, idx) => (
             <span
               key={seg.segment_id}
-              className="flex items-center gap-1 px-2.5 py-1 bg-gray-800 border border-gray-700 rounded-full text-xs text-gray-300"
+              className="flex items-center gap-1 px-2.5 py-1 bg-gray-50 border border-gray-200 rounded-full text-xs text-gray-700"
             >
               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
               {seg.road_name}
@@ -78,20 +78,20 @@ export default function TrendChart({ selectedSegments, onRemove }) {
 
       {/* Chart or Empty State */}
       {!hasSelection ? (
-        <div className="h-64 flex flex-col items-center justify-center text-gray-500 border-2 border-dashed border-gray-800 rounded-xl">
+        <div className="h-64 flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-200 rounded-xl">
           <TrendingUp className="w-10 h-10 mb-2 opacity-30" />
           <span className="text-sm">點擊上方路段卡片加入趨勢監測</span>
         </div>
       ) : allData.length === 0 ? (
-        <div className="h-64 flex items-center justify-center text-gray-500 text-sm">
+        <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
           載入中...
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={allData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1F2937" />
-            <XAxis dataKey="time" stroke="#6B7280" fontSize={11} />
-            <YAxis stroke="#6B7280" fontSize={11} domain={[0, 1.05]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+            <XAxis dataKey="time" stroke="#9CA3AF" fontSize={11} />
+            <YAxis stroke="#9CA3AF" fontSize={11} domain={[0, 1.05]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
             <ReferenceLine y={0.95} stroke="#EF4444" strokeDasharray="4 4" strokeOpacity={0.5} />
             <ReferenceLine y={0.85} stroke="#F59E0B" strokeDasharray="4 4" strokeOpacity={0.5} />
             <Tooltip content={<CustomTooltip />} />

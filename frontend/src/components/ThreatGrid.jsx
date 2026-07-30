@@ -9,7 +9,7 @@ function cardStyle(level, inChart) {
   if (inChart) return "border-blue-500/60 bg-blue-950/30 ring-1 ring-blue-500/30";
   if (level === "A") return "border-red-500/60 bg-red-950/40";
   if (level === "B") return "border-yellow-500/50 bg-yellow-950/30";
-  return "border-gray-700 bg-gray-800/50";
+  return "border-gray-200 bg-gray-50";
 }
 
 function barColor(level) {
@@ -19,9 +19,9 @@ function barColor(level) {
 }
 
 function statusLabel(level) {
-  if (level === "A") return { text: "癱瘓", cls: "bg-red-600 text-red-100" };
+  if (level === "A") return { text: "癱瘓", cls: "bg-red-600 text-red-700" };
   if (level === "B") return { text: "壅擠", cls: "bg-yellow-500 text-yellow-900" };
-  return { text: "正常", cls: "bg-green-600 text-green-100" };
+  return { text: "正常", cls: "bg-green-600 text-green-800" };
 }
 
 export default function ThreatGrid({ segments, timestamp, onAddToChart, chartSegmentIds }) {
@@ -30,12 +30,12 @@ export default function ThreatGrid({ segments, timestamp, onAddToChart, chartSeg
   const congestedCount = sorted.filter((s) => s.level === "B").length;
 
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
+    <div className="bg-white rounded-xl border border-gray-200 p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <ShieldAlert className="w-5 h-5 text-blue-400" />
-          <h2 className="text-sm font-semibold text-gray-200">即時路網監測</h2>
-          <span className="text-xs text-gray-500">點擊卡片加入趨勢圖</span>
+          <h2 className="text-sm font-semibold text-gray-800">即時路網監測</h2>
+          <span className="text-xs text-gray-400">點擊卡片加入趨勢圖</span>
         </div>
         <div className="flex items-center gap-3 text-xs">
           {criticalCount > 0 && (
@@ -48,7 +48,7 @@ export default function ThreatGrid({ segments, timestamp, onAddToChart, chartSeg
               {congestedCount} 壅擠
             </span>
           )}
-          <span className="text-gray-500">{timestamp}</span>
+          <span className="text-gray-400">{timestamp}</span>
         </div>
       </div>
 
@@ -65,7 +65,7 @@ export default function ThreatGrid({ segments, timestamp, onAddToChart, chartSeg
               className={`rounded-lg border p-3 cursor-pointer transition hover:scale-[1.02] active:scale-95 ${cardStyle(seg.level, inChart)}`}
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-gray-200 truncate">{seg.road_name}</span>
+                <span className="text-xs font-medium text-gray-800 truncate">{seg.road_name}</span>
                 <div className="flex items-center gap-1">
                   {inChart && <Check className="w-3 h-3 text-blue-400" />}
                   <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${status.cls}`}>
@@ -74,13 +74,13 @@ export default function ThreatGrid({ segments, timestamp, onAddToChart, chartSeg
                 </div>
               </div>
 
-              <div className="w-full bg-gray-700/60 rounded-full h-2 mb-2">
+              <div className="w-full bg-gray-200/60 rounded-full h-2 mb-2">
                 <div className={`h-2 rounded-full transition-all ${barColor(seg.level)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
               </div>
 
               <div className="flex items-center justify-between text-[11px]">
                 <span className={`font-bold ${seg.level === "A" ? "text-red-400" : seg.level === "B" ? "text-yellow-400" : "text-green-400"}`}>{pct}%</span>
-                <span className="text-gray-500">{seg.avg_speed} km/h</span>
+                <span className="text-gray-400">{seg.avg_speed} km/h</span>
               </div>
             </div>
           );

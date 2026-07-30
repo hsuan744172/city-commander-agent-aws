@@ -1,15 +1,21 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Route, Clock, TrafficCone, AlertCircle, BookOpen, Copy, Send, Check } from "lucide-react";
+import { ChevronDown, ChevronUp, Route, Clock, Send, Copy, Check, AlertTriangle } from "lucide-react";
 import CMSInline from "./CMSInline";
 
-export default function AdvisoryCard({ advisory }) {
-  const [expanded, setExpanded] = useState(true);
+export default function AdvisoryCard({ advisory, isSelected, onSelect }) {
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   if (advisory.error) {
+    const isApiError = advisory.error.includes("API") || advisory.error.includes("http") || advisory.error.includes("503");
     return (
-      <div className="bg-red-900/20 border border-red-800 rounded-xl p-4 flex items-center gap-2 text-red-300 text-sm">
-        <AlertCircle className="w-4 h-4 shrink-0" />
-        <span>{advisory.event_id}：{advisory.error}</span>
+      <div className={`rounded-xl p-4 border cursor-pointer transition ${isSelected ? "border-blue-400 bg-blue-50" : "border-gray-200 bg-white hover:bg-gray-50"}`} onClick={onSelect}>
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-500" />
+          <span className="text-sm text-amber-700">
+            {isApiError ? "AI 顧問忙碌中，已切換至 SOP 備援模式" : `${advisory.event_id} 處理異常`}
+          </span>
+        </div>
       </div>
     );
   }
@@ -20,151 +26,163 @@ export default function AdvisoryCard({ advisory }) {
   const ete = route.ete_estimate;
   const primary = route.primary_evacuation_route;
   const comms = advisory.public_communications || {};
+  const special = advisory.special_advisory;
+
+  const handleCopy = () => {
+    const text = advisory.ai_narrative || advisory.summary || "";
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
-    <div className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3.5 bg-gray-800/60 cursor-pointer" onClick={() => setExpanded(!expanded)}>
-        <div className="flex items-center gap-3">
+    <div
+      className={`rounded-xl border transition cursor-pointer ${isSelected ? "border-blue-400 ring-2 ring-blue-100 bg-blue-50/30" : "border-gray-200 bg-white hover:border-gray-300"}`}
+      onClick={onSelect}
+    >
+      {/* === 頂部摘要 (三秒決策) === */}
+      <div className="p-4">
+        {/* Row 1: ID + Severity + SOP */}
+        <div className="flex items-center gap-2 flex-wrap mb-2">
+          <span className="text-sm font-bold text-gray-900">{advisory.event_id}</span>
+          <SeverityBadge severity={eid.severity} />
           <LevelBadge level={traffic.max_level} />
-          <span className="text-sm font-bold">{advisory.event_id}</span>
-          <span className="text-xs text-gray-400">{eid.location}</span>
+          {eid.triggered_sop_articles?.map((s, i) => (
+            <span key={i} className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-medium">
+              SOP {s.sop_number}
+            </span>
+          ))}
         </div>
-        {expanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
-      </div>
 
-      {expanded && (
-        <div className="p-5 space-y-4">
-          {/* Summary */}
-          <p className="text-sm text-gray-100 font-medium leading-relaxed">{advisory.summary}</p>
+        {/* Row 2: Location */}
+        <div className="text-sm text-gray-600 mb-3">{eid.location || eid.affected_segment}</div>
 
-          {/* 1. SOP 觸發 */}
-          {eid.triggered_sop_articles?.length > 0 && (
-            <Section icon={BookOpen} title="觸發 SOP 條款" color="yellow">
-              {eid.triggered_sop_articles.map((s, i) => (
-                <div key={i} className="text-sm text-yellow-100/90">
-                  <span className="font-semibold">第 {s.sop_number} 條 {s.title}</span>
-                  <span className="text-yellow-200/60 ml-2">— {s.reason}</span>
-                </div>
-              ))}
-            </Section>
-          )}
-
-          {/* 2. 交通分級 */}
-          {traffic.congestion_details?.length > 0 && (
-            <Section icon={AlertCircle} title="交通分級判定依據" color="orange">
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {traffic.congestion_details.map((c, i) => (
-                  <div key={i} className="bg-gray-800/50 rounded-lg px-3 py-2">
-                    <div className="text-xs text-gray-400">{c.road_name}</div>
-                    <div className={`text-sm font-bold ${c.level === "A" ? "text-red-400" : c.level === "B" ? "text-yellow-400" : "text-green-400"}`}>
-                      飽和度 {Math.round(c.saturation_score * 100)}%
-                    </div>
-                    <div className="text-xs text-gray-500">{c.description}</div>
-                  </div>
-                ))}
-              </div>
-            </Section>
-          )}
-
-          {/* 3. 路徑建議 */}
+        {/* Row 3: Key metrics */}
+        <div className="flex items-center gap-4 flex-wrap">
+          {/* 主疏散路徑 */}
           {primary && (
-            <Section icon={Route} title="替代路徑建議" color="green">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="bg-green-600 text-xs px-2 py-0.5 rounded font-bold">主疏散</span>
-                  <span className="text-sm font-semibold text-green-100">{primary.primary_route_name}</span>
-                  <span className="text-xs text-green-300/60">容量 {primary.capacity_vph} 車/時 ・ 飽和度 {Math.round(primary.current_saturation * 100)}%</span>
-                </div>
-                <div className="text-xs text-green-200/70">決策依據：{primary.selection_reason}</div>
-                {primary.congestion_note && <div className="text-xs text-yellow-300 bg-yellow-900/20 px-3 py-1.5 rounded">{primary.congestion_note}</div>}
-
-                {primary.secondary_routes?.length > 0 && (
-                  <div className="mt-2 pt-2 border-t border-green-800/30 space-y-1">
-                    <div className="text-xs text-green-400/60 font-medium">次要替代路線：</div>
-                    {primary.secondary_routes.map((r, i) => (
-                      <div key={i} className="text-xs text-green-200/60 flex justify-between">
-                        <span>{r.name}</span>
-                        <span>飽和度 {Math.round(r.saturation_score * 100)}% ・ {r.is_upstream ? "上游" : "下游"}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </Section>
-          )}
-
-          {/* 4. ETE */}
-          {ete && (
-            <Section icon={Clock} title="預估恢復時間 (ETE)" color="blue">
-              <div className="flex items-baseline gap-3">
-                <span className="text-3xl font-bold text-blue-100">{ete.ete_minutes}</span>
-                <span className="text-sm text-blue-300">分鐘</span>
-              </div>
-              <div className="text-xs text-blue-300/70 mt-1 space-y-0.5">
-                <div>基礎清除時間：{ete.base_clearance_minutes} 分鐘（嚴重度：{ete.severity}）</div>
-                <div>壅塞懲罰：{ete.congestion_penalty_minutes} 分鐘（平均飽和度 {Math.round(ete.avg_saturation_score * 100)}%）</div>
-                <div className="text-blue-400/50 mt-1">{ete.formula}</div>
-                <div className="text-blue-400/50">來源：{ete.calculation_source}</div>
-              </div>
-            </Section>
-          )}
-
-          {/* 5. 號誌調整 */}
-          {route.signal_adjustments?.length > 0 && (
-            <Section icon={TrafficCone} title="號誌調整指令" color="purple">
-              {route.signal_adjustments.map((s, i) => (
-                <div key={i} className="text-sm text-purple-200">
-                  <span className="font-medium">{s.road_name}</span>：{s.action}
-                  {s.note && <span className="text-xs text-purple-300/60 ml-2">（{s.note}）</span>}
-                </div>
-              ))}
-            </Section>
-          )}
-
-          {/* 內嵌多語通報 (SOP 6) */}
-          <CMSInline comms={comms} eventId={advisory.event_id} />
-
-          {/* Errors */}
-          {advisory.errors?.length > 0 && (
-            <div className="text-xs text-red-400 space-y-0.5">
-              {advisory.errors.map((e, i) => <div key={i}>⚠ {e}</div>)}
+            <div className="flex items-center gap-1.5">
+              <Route className="w-4 h-4 text-green-500" />
+              <span className="text-sm font-medium text-green-700">{primary.primary_route_name}</span>
             </div>
           )}
+
+          {/* ETE 大字 */}
+          {ete && (
+            <div className="flex items-center gap-1.5">
+              <Clock className="w-4 h-4 text-blue-500" />
+              <span className="text-xl font-bold text-blue-700">{ete.ete_minutes}</span>
+              <span className="text-xs text-blue-500">分鐘</span>
+            </div>
+          )}
+
+          {/* 特殊處置 (SOP3/5) */}
+          {special && !primary && (
+            <span className="text-sm text-cyan-700 font-medium">{special.title}</span>
+          )}
+        </div>
+
+        {/* Row 4: Action buttons */}
+        <div className="flex items-center gap-2 mt-3">
+          <button
+            onClick={(e) => { e.stopPropagation(); handleCopy(); }}
+            className="flex items-center gap-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs text-gray-600 transition"
+          >
+            {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+            {copied ? "已複製" : "複製建議書"}
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setDetailOpen(!detailOpen); }}
+            className="flex items-center gap-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs text-gray-600 transition"
+          >
+            {detailOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            {detailOpen ? "收合詳情" : "展開詳情"}
+          </button>
+        </div>
+      </div>
+
+      {/* === 折疊詳情 (Accordion) === */}
+      {detailOpen && (
+        <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-3" onClick={(e) => e.stopPropagation()}>
+          {/* AI 建議書敘述 */}
+          {advisory.ai_narrative && (
+            <div className="bg-blue-50 rounded-lg p-3">
+              <div className="text-[10px] font-semibold text-blue-500 mb-1">AI 決策分析</div>
+              <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{advisory.ai_narrative}</div>
+            </div>
+          )}
+
+          {/* 交通分級 */}
+          {traffic.congestion_details?.length > 0 && (
+            <div>
+              <div className="text-[10px] font-semibold text-gray-400 mb-1">交通分級依據</div>
+              {traffic.congestion_details.map((c, i) => (
+                <div key={i} className="flex items-center justify-between text-sm">
+                  <span className="text-gray-600">{c.road_name}</span>
+                  <span className={`font-bold ${c.level === "A" ? "text-red-500" : c.level === "B" ? "text-amber-500" : "text-green-500"}`}>
+                    {Math.round(c.saturation_score * 100)}% {c.description}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 路徑選擇理由 */}
+          {primary?.selection_reason && (
+            <div>
+              <div className="text-[10px] font-semibold text-gray-400 mb-1">路徑選擇依據</div>
+              <div className="text-sm text-gray-600">{primary.selection_reason}</div>
+              {primary.secondary_routes?.length > 0 && (
+                <div className="text-xs text-gray-400 mt-1">
+                  次要替代：{primary.secondary_routes.map(r => `${r.name}(${Math.round(r.saturation_score*100)}%)`).join("、")}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 特殊處置細節 */}
+          {special?.actions && (
+            <div>
+              <div className="text-[10px] font-semibold text-gray-400 mb-1">{special.title}</div>
+              <ul className="text-sm text-gray-600 space-y-0.5">
+                {special.actions.map((a, i) => <li key={i}>• {a}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {/* 號誌調整 */}
+          {route.signal_adjustments?.length > 0 && (
+            <div>
+              <div className="text-[10px] font-semibold text-gray-400 mb-1">號誌調整</div>
+              {route.signal_adjustments.map((s, i) => (
+                <div key={i} className="text-sm text-gray-600">{s.road_name}：{s.action}</div>
+              ))}
+            </div>
+          )}
+
+          {/* 多語通報 */}
+          <CMSInline comms={comms} eventId={advisory.event_id} />
         </div>
       )}
     </div>
   );
 }
 
-function Section({ icon: Icon, title, color, children }) {
-  const colors = {
-    yellow: "bg-yellow-900/15 border-yellow-800/40",
-    orange: "bg-orange-900/15 border-orange-800/40",
-    green: "bg-green-900/15 border-green-800/40",
-    blue: "bg-blue-900/15 border-blue-800/40",
-    purple: "bg-purple-900/15 border-purple-800/40",
+function SeverityBadge({ severity }) {
+  const s = {
+    Critical: "bg-red-600 text-white px-2 py-0.5",
+    High: "bg-orange-500 text-white px-2 py-0.5",
+    Medium: "bg-yellow-500 text-black px-2 py-0.5",
   };
-  const iconColors = {
-    yellow: "text-yellow-400",
-    orange: "text-orange-400",
-    green: "text-green-400",
-    blue: "text-blue-400",
-    purple: "text-purple-400",
-  };
-  return (
-    <div className={`rounded-lg border p-4 ${colors[color]}`}>
-      <div className="flex items-center gap-2 mb-2">
-        <Icon className={`w-4 h-4 ${iconColors[color]}`} />
-        <span className={`text-xs font-semibold ${iconColors[color]}`}>{title}</span>
-      </div>
-      <div className="space-y-1.5">{children}</div>
-    </div>
-  );
+  return severity ? (
+    <span className={`text-xs rounded-md font-bold ${s[severity] || "bg-gray-200 text-gray-600 px-2 py-0.5"}`}>
+      {severity}
+    </span>
+  ) : null;
 }
 
 function LevelBadge({ level }) {
-  const s = { A: "bg-red-600", B: "bg-yellow-500 text-black", Normal: "bg-green-600" };
-  const l = { A: "A 級癱瘓", B: "B 級壅擠", Normal: "正常" };
-  return <span className={`px-2 py-0.5 rounded text-xs font-bold ${s[level] || s.Normal}`}>{l[level] || "正常"}</span>;
+  const s = { A: "bg-red-100 text-red-600 border border-red-200", B: "bg-amber-100 text-amber-600 border border-amber-200", Normal: "bg-green-100 text-green-600 border border-green-200" };
+  const l = { A: "A 級", B: "B 級", Normal: "正常" };
+  return <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${s[level] || s.Normal}`}>{l[level] || "正常"}</span>;
 }

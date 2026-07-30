@@ -10,6 +10,7 @@ export default function DashboardTab() {
   const [showAlert, setShowAlert] = useState(false);
   const [alertShownOnce, setAlertShownOnce] = useState(false);
   const [chartSegments, setChartSegments] = useState([]);
+  const [autoAdvisories, setAutoAdvisories] = useState([]);
 
   useEffect(() => {
     const load = async () => {
@@ -18,6 +19,7 @@ export default function DashboardTab() {
         const data = await res.json();
         setSegments(data.segments || []);
         setTs(data.timestamp || "");
+        setAutoAdvisories(data.auto_advisories || []);
 
         // 首次載入自動彈一次警報
         if (!alertShownOnce) {
@@ -34,10 +36,12 @@ export default function DashboardTab() {
     return () => clearInterval(interval);
   }, [alertShownOnce]);
 
-  // 拖拉加入折線圖
+  // 點擊卡片：toggle 加入/移除折線圖
   const handleAddToChart = (segment) => {
     setChartSegments((prev) => {
-      if (prev.find((s) => s.segment_id === segment.segment_id)) return prev;
+      if (prev.find((s) => s.segment_id === segment.segment_id)) {
+        return prev.filter((s) => s.segment_id !== segment.segment_id);
+      }
       return [...prev, segment];
     });
   };
@@ -62,8 +66,8 @@ export default function DashboardTab() {
         onRemove={handleRemoveFromChart}
       />
 
-      {/* 底部：預警快訊 */}
-      <AlertTicker segments={segments} />
+      {/* 底部：預警快訊 + 自動路徑引導 */}
+      <AlertTicker segments={segments} autoAdvisories={autoAdvisories} />
 
       {/* 警報按鈕 (關閉後可重新打開) */}
       {!showAlert && alertShownOnce && (
@@ -90,10 +94,10 @@ function AlertModal({ segments, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-gray-900 border border-red-600/60 rounded-2xl p-6 max-w-lg w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white border border-red-300 rounded-2xl p-6 max-w-lg w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 mb-4">
           <AlertTriangle className="w-6 h-6 text-red-400" />
-          <h3 className="text-lg font-bold text-red-200">路網異常預警摘要</h3>
+          <h3 className="text-lg font-bold text-red-700">路網異常預警摘要</h3>
         </div>
 
         {critical.length > 0 && (
@@ -101,7 +105,7 @@ function AlertModal({ segments, onClose }) {
             <div className="text-xs font-semibold text-red-400 mb-1">A 級癱瘓（飽和度 ≥ 95%）</div>
             <div className="space-y-1">
               {critical.map((s) => (
-                <div key={s.segment_id} className="text-sm text-red-200 bg-red-900/30 px-3 py-1.5 rounded">
+                <div key={s.segment_id} className="text-sm text-red-700 bg-red-900/30 px-3 py-1.5 rounded">
                   {s.road_name} — {Math.round(s.saturation_score * 100)}%，時速 {s.avg_speed} km/h
                 </div>
               ))}
@@ -114,7 +118,7 @@ function AlertModal({ segments, onClose }) {
             <div className="text-xs font-semibold text-yellow-400 mb-1">B 級壅擠（飽和度 ≥ 85%）</div>
             <div className="space-y-1">
               {congested.map((s) => (
-                <div key={s.segment_id} className="text-sm text-yellow-200 bg-yellow-900/20 px-3 py-1.5 rounded">
+                <div key={s.segment_id} className="text-sm text-yellow-700 bg-yellow-900/20 px-3 py-1.5 rounded">
                   {s.road_name} — {Math.round(s.saturation_score * 100)}%，時速 {s.avg_speed} km/h
                 </div>
               ))}
@@ -122,7 +126,7 @@ function AlertModal({ segments, onClose }) {
           </div>
         )}
 
-        <button onClick={onClose} className="mt-4 w-full py-2.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition">
+        <button onClick={onClose} className="mt-4 w-full py-2.5 bg-gray-200 hover:bg-gray-300 rounded-lg text-sm font-medium transition">
           關閉
         </button>
       </div>

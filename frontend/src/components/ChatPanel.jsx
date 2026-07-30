@@ -40,7 +40,7 @@ export default function ChatTab() {
   };
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 flex flex-col h-[calc(100vh-120px)]">
+    <div className="bg-white rounded-xl border border-gray-200 flex flex-col h-[calc(100vh-140px)] shadow-lg">
       {/* Header */}
       <div className="px-5 py-4 border-b border-gray-200 flex items-center gap-2">
         <Sparkles className="w-5 h-5 text-blue-400" />
