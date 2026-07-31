@@ -19,11 +19,20 @@ ROAD_NETWORK_JSON = DATA_DIR / "road_network_geometry.json"
 CROWD_DENSITY_CSV = DATA_DIR / "signaling_crowd_density.csv"
 
 
+def _safe_pct_to_float(series: pd.Series) -> pd.Series:
+    """將可能含 % 的欄位統一轉為 0~1 浮點數。"""
+    def convert(val):
+        if isinstance(val, str):
+            val = val.replace("%", "").strip()
+            result = float(val)
+            return result / 100 if result > 1 else result
+        return float(val)
+    return series.apply(convert)
+
+
 def _load_traffic_flow() -> pd.DataFrame:
     df = pd.read_csv(TRAFFIC_FLOW_CSV, parse_dates=["Timestamp"])
-    if df["Saturation_Score"].dtype == object:
-        df["Saturation_Score"] = df["Saturation_Score"].str.rstrip("%").astype(float)
-        df.loc[df["Saturation_Score"] > 1, "Saturation_Score"] /= 100
+    df["Saturation_Score"] = _safe_pct_to_float(df["Saturation_Score"])
     return df
 
 
@@ -34,8 +43,7 @@ def _load_road_network() -> list[dict]:
 
 def _load_crowd_density() -> pd.DataFrame:
     df = pd.read_csv(CROWD_DENSITY_CSV, parse_dates=["Timestamp"])
-    if df["Roaming_User_Pct"].dtype == object:
-        df["Roaming_User_Pct"] = df["Roaming_User_Pct"].str.rstrip("%").astype(float) / 100
+    df["Roaming_User_Pct"] = _safe_pct_to_float(df["Roaming_User_Pct"])
     return df
 
 

@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -112,32 +112,34 @@ async def health():
 
 
 @app.get("/api/status")
-async def traffic_status():
-    """回傳路網即時狀態摘要。"""
+async def traffic_status_with_routing():
+    """
+    回傳路網即時狀態。
+    SOP 第 1 條：達 A 級時自動觸發第 2 條替代路徑引導。
+    """
     import pandas as pd
+    from backend.agents.traffic_math import calculate_optimal_route, calculate_ete
 
     csv_path = DATA_DIR / "city_traffic_flow.csv"
     if not csv_path.exists():
         return JSONResponse(content={"error": "Traffic data not found"})
 
     df = pd.read_csv(csv_path, parse_dates=["Timestamp"])
-    if df["Saturation_Score"].dtype == object:
-        df["Saturation_Score"] = df["Saturation_Score"].str.rstrip("%").astype(float)
-        df.loc[df["Saturation_Score"] > 1, "Saturation_Score"] /= 100
+    def _pct(v):
+        s = str(v).replace("%", "").strip()
+        f = float(s)
+        return f / 100 if f > 1 else f
+    df["Saturation_Score"] = df["Saturation_Score"].apply(_pct)
 
-    latest_ts = df["Timestamp"].max()
-    latest = df[df["Timestamp"] == latest_ts]
+    ts_counts = df.groupby("Timestamp").size()
+    best_ts = ts_counts[ts_counts == ts_counts.max()].index.max()
+    latest = df[df["Timestamp"] == best_ts]
+    ts_str = best_ts.strftime("%Y-%m-%d %H:%M")
 
     segments = []
     for _, row in latest.iterrows():
         score = float(row["Saturation_Score"])
-        if score >= 0.95:
-            level = "A"
-        elif score >= 0.85:
-            level = "B"
-        else:
-            level = "Normal"
-
+        level = "A" if score >= 0.95 else ("B" if score >= 0.85 else "Normal")
         segments.append({
             "segment_id": row["Segment_ID"],
             "road_name": row["Road_Name"],
@@ -148,11 +150,75 @@ async def traffic_status():
             "level": level,
         })
 
+    # SOP 第 1 條 → A 級自動觸發第 2 條替代路徑
+    a_level_segments = [s for s in segments if s["level"] == "A"]
+    auto_advisories = []
+
+    for seg in a_level_segments:
+        seg_id = seg["segment_id"]
+        try:
+            route = calculate_optimal_route(seg_id, ts_str)
+            primary = (route or {}).get("primary_route")
+            ete_data = calculate_ete("Critical", [seg_id], ts_str)
+
+            advisory = {
+                "triggered_by": f"{seg['road_name']} 達 A 級癱瘓（飽和度 {round(seg['saturation_score'] * 100)}%）",
+                "sop_reference": "SOP 第 1 條 → 同步觸發第 2 條替代路徑引導",
+                "segment_id": seg_id,
+                "road_name": seg["road_name"],
+            }
+
+            if primary and isinstance(primary, dict):
+                advisory["primary_route"] = primary.get("name", "")
+                advisory["primary_saturation"] = primary.get("saturation_score", 0)
+                advisory["selection_reason"] = (route or {}).get("selection_reason", "")
+                advisory["signal_action"] = f"{primary.get('name', '')} 綠燈配時 +25%"
+
+            if ete_data and "ete_minutes" in ete_data:
+                advisory["ete_minutes"] = ete_data["ete_minutes"]
+
+            auto_advisories.append(advisory)
+        except Exception:
+            pass
+
     return {
-        "timestamp": latest_ts.strftime("%Y-%m-%d %H:%M"),
+        "timestamp": ts_str,
         "total_segments": len(segments),
         "segments": segments,
+        "auto_advisories": auto_advisories,
     }
+
+
+@app.get("/api/trend")
+async def traffic_trend():
+    """回傳所有路段的時序飽和度資料供折線圖使用。"""
+    import pandas as pd
+
+    csv_path = DATA_DIR / "city_traffic_flow.csv"
+    if not csv_path.exists():
+        return JSONResponse(content={"data": []})
+
+    df = pd.read_csv(csv_path, parse_dates=["Timestamp"])
+    def _pct(v):
+        s = str(v).replace("%", "").strip()
+        f = float(s)
+        return f / 100 if f > 1 else f
+    df["Saturation_Score"] = df["Saturation_Score"].apply(_pct)
+
+    # 所有路段 pivot
+    all_segments = df["Segment_ID"].unique().tolist()
+    pivot = df.pivot_table(
+        index="Timestamp", columns="Segment_ID", values="Saturation_Score", aggfunc="first"
+    ).reset_index().sort_values("Timestamp")
+
+    data = []
+    for _, row in pivot.iterrows():
+        point = {"time": row["Timestamp"].strftime("%H:%M")}
+        for seg in all_segments:
+            point[seg] = round(row.get(seg, 0), 3) if pd.notna(row.get(seg)) else None
+        data.append(point)
+
+    return {"data": data}
 
 
 @app.post("/api/incidents")
@@ -167,6 +233,31 @@ async def handle_incidents(request: IncidentsRequest):
     )
 
     return JSONResponse(content=report)
+
+
+@app.post("/api/incidents/upload")
+async def upload_incidents(file: UploadFile):
+    """上傳 live_incidents.json 檔案，解析後注入系統。"""
+    import json as json_mod
+
+    try:
+        content = await file.read()
+        data = json_mod.loads(content.decode("utf-8"))
+
+        # 支援兩種格式：直接陣列 [...] 或 {"incidents": [...]}
+        if isinstance(data, list):
+            incidents = data
+        elif isinstance(data, dict) and "incidents" in data:
+            incidents = data["incidents"]
+        else:
+            return JSONResponse(status_code=400, content={"error": "JSON 格式不正確，需為陣列或含 incidents 欄位"})
+
+        session_id = f"upload_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        report = run_commander(event={"incidents": incidents}, session_id=session_id)
+        return JSONResponse(content=report)
+
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": f"檔案解析失敗: {type(e).__name__}: {e}"})
 
 
 @app.post("/api/what-if")

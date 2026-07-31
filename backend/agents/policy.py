@@ -40,7 +40,7 @@ def check_sop2_trigger(incident: dict) -> dict:
         "sop_number": 2,
         "sop_title": "車禍與路障應變",
         "triggered": triggered,
-        "reason": f"status={status}, severity={severity}, segment={affected}",
+        "reason": f"事故路段 {affected} 狀態為{status}、嚴重度{severity}，符合 SOP 第 2 條三項觸發條件" if triggered else f"未同時滿足三項條件（狀態={status}、嚴重度={severity}、路段={affected}）",
         "evidence": {"status": status, "severity": severity, "affected_segment": affected},
     }
 
@@ -60,7 +60,7 @@ def check_sop3_trigger(incident: dict, crowd_data: dict | None = None) -> dict:
         "sop_number": 3,
         "sop_title": "捷運與接駁分流",
         "triggered": triggered,
-        "reason": f"Growth_Rate={growth_rate:.2f}, User_Count={user_count}",
+        "reason": f"國父紀念館站人流增幅 {growth_rate:.0%}、總人數 {user_count:,} 人，{'已達' if triggered else '未達'}分流門檻",
         "evidence": {"growth_rate": growth_rate, "user_count": user_count},
     }
 
@@ -76,7 +76,7 @@ def check_sop5_trigger(incident: dict) -> dict:
         "sop_number": 5,
         "sop_title": "號誌故障應變",
         "triggered": triggered,
-        "reason": f"type={event_type}, keywords={'found' if triggered else 'not found'}",
+        "reason": f"事件類型為{event_type}，{'描述包含號誌故障關鍵字' if triggered else '未偵測到號誌故障特徵'}",
         "evidence": {"type": event_type},
     }
 
@@ -120,10 +120,19 @@ def run_assessment(task_payload: dict) -> dict:
     timestamp = task_payload.get("timestamp") or incident.get("timestamp") or ""
 
     event_id = incident.get("event_id") or "UNKNOWN"
+    affected_segment = incident.get("affected_segment") or ""
+    event_type = incident.get("type") or ""
 
-    # 擁塞級別
+    # 判定事件類型
+    is_signal_failure = event_type == "Power_Failure" or any(kw in (incident.get("description") or "") for kw in ["號誌失效", "號誌故障"])
+    is_crowd_event = affected_segment.startswith("BS_")
+
+    # 擁塞級別 — SOP5/人流事件僅顯示受影響路段
     congestion_levels = []
     for seg_id, seg_info in traffic_data.items():
+        # 號誌故障或人流事件：只保留該事件的 affected_segment
+        if (is_signal_failure or is_crowd_event) and seg_id != affected_segment:
+            continue
         score = seg_info.get("saturation_score", 0)
         level = assess_congestion_level(score)
         congestion_levels.append({
@@ -145,12 +154,17 @@ def run_assessment(task_payload: dict) -> dict:
     ]
 
     triggered_numbers = [s["sop_number"] for s in triggered_sops if s["triggered"]]
-    requires_traffic_routing = max_level == "A" or any(n in triggered_numbers for n in [2, 3, 5])
+    affected_segment = incident.get("affected_segment") or ""
+    event_type = incident.get("type") or ""
+
+    # 只有 RD_ 路段的車禍事件才需要路徑重規劃
+    is_road_incident = affected_segment.startswith("RD_") and event_type != "Power_Failure"
+    requires_traffic_routing = is_road_incident and (max_level == "A" or 2 in triggered_numbers)
 
     # Summary
     summary_parts = []
     if max_level == "A":
-        summary_parts.append("達 A 級癱瘓，啟動全面應變")
+        summary_parts.append("達 A 級癱瘓，啟動應變")
     elif max_level == "B":
         summary_parts.append("達 B 級壅擠，啟動長綠燈時制")
     for s in triggered_sops:
