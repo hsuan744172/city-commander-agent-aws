@@ -175,6 +175,28 @@ def data_as_of(time_df: pd.DataFrame) -> str | None:
     return pd.Timestamp(time_df["Timestamp"].max()).strftime(sim_clock.TIME_FMT)
 
 
+def get_current_traffic_context(timestamp: str | None = None) -> dict:
+    """回傳可直接提供給 Agent 的完整路網資料，包含唯一依據時間。"""
+    traffic_df = _load_traffic_flow()
+    time_df, ts = _get_time_slice(traffic_df, timestamp, key_col="Segment_ID")
+    data_timestamp = data_as_of(time_df) or ts.strftime(sim_clock.TIME_FMT)
+    segments = []
+    for _, row in time_df.iterrows():
+        segments.append({
+            "路段編號": row["Segment_ID"],
+            "路段名稱": row["Road_Name"],
+            "飽和度": f"{round(float(row['Saturation_Score']) * 100)}%",
+            "平均車速": f"{float(row['Avg_Speed']):g} 公里/小時",
+            "車流量": f"{int(row['Vehicle_Count'])} 輛",
+            "車道狀態": row["Lane_Status"],
+        })
+    return {
+        "資料時間": data_timestamp,
+        "路段總數": len(segments),
+        "路段狀態": segments,
+    }
+
+
 def calculate_optimal_route(incident_segment_id: str, timestamp: str | None = None) -> dict:
     """
     SOP 第 2 條：從事故路段的 alternatives 篩選主疏散路徑。

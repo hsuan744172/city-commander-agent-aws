@@ -504,7 +504,7 @@ def run_commander(event: dict | None = None, session_id: str = "", sim_time: str
 
 def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) -> dict:
     """
-    透過 Amazon Bedrock Claude Sonnet 5 執行 What-if 情境問答。
+    透過 Amazon Bedrock 執行 What-if 情境問答。
 
     sim_time：本次問答要套用的模擬時間（不影響全域時鐘）；
               留空則使用當下模擬時間。LLM 只會看到該時間為止的路網數據。
@@ -512,14 +512,16 @@ def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) 
 
     # 讀取 SOP 作為 system context
     from backend.agents.policy import read_traffic_sop
+    from backend.agents.traffic_math import get_current_traffic_context
+
     sop_data = read_traffic_sop()
     sop_text = sop_data.get("sop_text", "")[:3000]
 
-    # 讀取「當下模擬時間」的路網狀態（未來資料不會外洩給 LLM）
+    # 數值選擇與格式化一律由 traffic_math 提供；模擬時間限制可見資料範圍。
     with sim_clock.override(sim_time):
         current_time = sim_clock.now_str()
-        traffic_data = _load_traffic_data()
-    traffic_summary = json.dumps(traffic_data, ensure_ascii=False)[:2000]
+        traffic_context = get_current_traffic_context(current_time)
+    traffic_summary = json.dumps(traffic_context, ensure_ascii=False)
 
     system_prompt = f"""你是「城市應變指揮官」，台北市交控中心的 AI 決策顧問。
 
@@ -533,10 +535,17 @@ def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) 
 - 所有數值直接用中文表述（例：「飽和度 95%」而非「Saturation_Score = 0.95」）
 
 【回覆格式要求】
-- 字數控制在 500 字以內
-- 結構：先判斷 → 再建議 → 最後行動指令
+- 硬性上限 450 個中文字，超過即視為錯誤；只准輸出「判斷：」「建議：」「行動指令：」三個純文字短段落
+- 不使用 Markdown 標題、粗體、表格、清單或分隔線
+- 每段最多三句，優先保留可執行指令，禁止重述全部路段明細
 - 時間格式一律 YYYY-MM-DD HH:MM
 - 引用 SOP 時標示條號（例：依據 SOP 第 2 條）
+
+【資料紀律】
+- 只能引用下方交通應變程序與路網狀態，禁止補充、猜測或虛構任何數字、日期、路段及監測缺漏
+- 所稱目前時間只能使用路網狀態中的「資料時間」
+- 未經資料明示，不得自行提出固定回報間隔、號誌調整比例或人力數量
+- 路網狀態已包含完整時間切片，必須整體判讀，不得只選第一條路段
 
 【知識基礎】
 交通應變標準程序：
@@ -559,7 +568,7 @@ def _call_bedrock(prompt: str, system_prompt: str, session_id: str) -> dict:
     """透過 Amazon Bedrock (Strands SDK) 回應。"""
     import os
 
-    model_id = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-5")
+    model_id = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
     region = os.environ.get("APP_AWS_REGION", os.environ.get("AWS_REGION", "us-west-2"))
 
     try:
