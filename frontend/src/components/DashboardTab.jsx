@@ -3,6 +3,7 @@ import { AlertTriangle } from "lucide-react";
 import ThreatGrid from "./ThreatGrid";
 import TrendChart from "./TrendChart";
 import AlertTicker from "./AlertTicker";
+import CityMap3D from "./CityMap3D";
 
 // 輪詢節奏：後端模擬時鐘會回報下一次時間變動的秒數，前端照它排程。
 const MIN_POLL_MS = 1000;      // 避免時鐘 interval 設太小時打爆後端
@@ -81,6 +82,9 @@ export default function DashboardTab() {
 
   return (
     <div className="space-y-4">
+      {/* 3D 城市地圖：道路飽和度即時漸變 */}
+      <CityMap3D segments={segments} className="h-[520px]" />
+
       {/* 頂部：威脅網格 (可拖拉進折線圖) */}
       <ThreatGrid
         segments={segments}
