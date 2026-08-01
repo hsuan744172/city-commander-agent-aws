@@ -89,3 +89,14 @@ body {
   color: var(--foreground);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
+
+/*
+ * 地圖 hover 提示框
+ * MapLibre 預設給 popup content 加上 pointer-events: auto，
+ * 跟著游標移動的提示框會蓋在路段上方並吃掉點擊事件，故整塊關閉指標互動。
+ */
+.cc-map-popup,
+.cc-map-popup .maplibregl-popup-content,
+.cc-map-popup .maplibregl-popup-tip {
+  pointer-events: none;
+}

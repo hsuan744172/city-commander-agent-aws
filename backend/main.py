@@ -560,7 +560,7 @@ _CAMERA_MAP: dict | None = None
 def _load_camera_map() -> dict:
     global _CAMERA_MAP
     if _CAMERA_MAP is None:
-        json_path = DATA_DIR / "segment_cameras.json"
+        json_path = get_data_path("segment_cameras.json")
         if not json_path.exists():
             logger.warning("找不到 segment_cameras.json，即時影像功能停用")
             _CAMERA_MAP = {"segments": {}}

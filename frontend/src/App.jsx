@@ -13,6 +13,15 @@ const TABS = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
+  // 儀表板點擊路段/小卡後要在建議書頁聚焦的路段
+  const [focusSegmentId, setFocusSegmentId] = useState(null);
+
+  // 從儀表板跳往「事件處置與建議書」並帶上該路段
+  const inspectSegment = (segment) => {
+    if (!segment?.segment_id) return;
+    setFocusSegmentId(segment.segment_id);
+    setActiveTab("incidents");
+  };
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] flex flex-col">
@@ -53,8 +62,14 @@ export default function App() {
 
       {/* Tab Content */}
       <main className="flex-1 p-4 max-w-[1600px] mx-auto w-full">
-        {activeTab === "dashboard" && <DashboardTab />}
-        {activeTab === "incidents" && <IncidentTab />}
+        {activeTab === "dashboard" && <DashboardTab onInspectSegment={inspectSegment} />}
+        {activeTab === "incidents" && (
+          <IncidentTab
+            focusSegmentId={focusSegmentId}
+            onClearFocus={() => setFocusSegmentId(null)}
+            onBackToDashboard={() => setActiveTab("dashboard")}
+          />
+        )}
         {activeTab === "chat" && <ChatTab />}
       </main>
     </div>

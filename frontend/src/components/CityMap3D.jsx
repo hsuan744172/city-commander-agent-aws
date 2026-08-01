@@ -138,7 +138,7 @@ function saturationToColor(score) {
 /**
  * 將後端 segments 資料轉換為 GeoJSON FeatureCollection
  */
-function buildRoadGeoJSON(segments, selectedIds = []) {
+function buildRoadGeoJSON(segments, selectedId = null) {
   const features = [];
   for (const seg of segments) {
     const coords = SEGMENT_COORDS[seg.segment_id];
@@ -154,7 +154,7 @@ function buildRoadGeoJSON(segments, selectedIds = []) {
         level: seg.level,
         lane_status: seg.lane_status,
         color: saturationToColor(seg.saturation_score),
-        selected: selectedIds.includes(seg.segment_id) ? 1 : 0,
+        selected: seg.segment_id === selectedId ? 1 : 0,
       },
       geometry: {
         type: "LineString",
@@ -171,7 +171,13 @@ function buildRoadGeoJSON(segments, selectedIds = []) {
  * - 道路線依飽和度即時漸變色
  * - 串接後端 /api/status 自動刷新
  */
-export default function CityMap3D({ segments = [], stations = [], selectedSegmentIds = [], onSegmentClick, className = "" }) {
+export default function CityMap3D({
+  segments = [],
+  stations = [],
+  selectedSegmentId = null,
+  onSegmentClick,
+  className = "",
+}) {
   const mapContainer = useRef(null);
   const mapRef = useRef(null);
   const popupRef = useRef(null);
@@ -287,14 +293,14 @@ export default function CityMap3D({ segments = [], stations = [], selectedSegmen
         },
       });
 
-      // 選中路段的額外粗外框
+      // 單選路段的額外粗外框（紫色不與飽和度色階衝突）
       map.addLayer({
         id: "traffic-roads-selected-outline",
         type: "line",
         source: "traffic-roads",
         filter: ["==", ["get", "selected"], 1],
         paint: {
-          "line-color": "#2563eb",
+          "line-color": "#BA56DE",
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
             13, 10,
@@ -450,7 +456,7 @@ export default function CityMap3D({ segments = [], stations = [], selectedSegmen
             <div>飽和度：<b>${score}%</b></div>
             <div>平均時速：${props.avg_speed} km/h</div>
             <div>車流量：${props.vehicle_count} 輛</div>
-            <div style="color:#888;font-size:11px;margin-top:4px">點擊加入趨勢圖</div>
+            <div style="color:#888;font-size:11px;margin-top:4px">點擊查看事件處置與建議書</div>
           </div>
         `;
 
@@ -461,6 +467,8 @@ export default function CityMap3D({ segments = [], stations = [], selectedSegmen
             closeButton: false,
             closeOnClick: false,
             offset: 10,
+            // 提示框不可吃掉滑鼠事件，否則會擋住路段點擊
+            className: "cc-map-popup",
           })
             .setLngLat(e.lngLat)
             .setHTML(html)
@@ -468,7 +476,7 @@ export default function CityMap3D({ segments = [], stations = [], selectedSegmen
         }
       });
 
-      // --- 點擊路段：加入/移除趨勢圖 ---
+      // --- 點擊路段：跳往該路段的事件處置與建議書 ---
       map.on("click", "traffic-roads-hitarea", (e) => {
         if (!e.features?.length) return;
         const props = e.features[0].properties;
@@ -511,9 +519,9 @@ export default function CityMap3D({ segments = [], stations = [], selectedSegmen
     const source = map.getSource("traffic-roads");
     if (!source) return;
 
-    const geojson = buildRoadGeoJSON(segments, selectedSegmentIds);
+    const geojson = buildRoadGeoJSON(segments, selectedSegmentId);
     source.setData(geojson);
-  }, [segments, selectedSegmentIds, mapLoaded]);
+  }, [segments, selectedSegmentId, mapLoaded]);
 
   // 當 stations 資料更新時，更新站點圖層
   useEffect(() => {
