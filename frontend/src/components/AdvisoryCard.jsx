@@ -17,8 +17,13 @@ import { cn } from "../lib/utils";
 import CMSInline from "./CMSInline";
 import RouteCandidateTable from "./RouteCandidateTable";
 
-export default function AdvisoryCard({ advisory, isSelected, onSelect }) {
-  const [detailOpen, setDetailOpen] = useState(false);
+export default function AdvisoryCard({
+  advisory,
+  isSelected,
+  onSelect,
+  defaultExpanded = false,
+}) {
+  const [detailOpen, setDetailOpen] = useState(defaultExpanded);
   const [copied, setCopied] = useState(false);
 
   if (advisory.error) {
@@ -56,6 +61,7 @@ export default function AdvisoryCard({ advisory, isSelected, onSelect }) {
   const ete = route.ete_estimate;
   const primary = route.primary_evacuation_route;
   const analysis = route.route_analysis;
+  const navigation = route.navigation_update || {};
   const comms = advisory.public_communications || {};
   const fieldActions = advisory.field_actions;
   const crossActions = advisory.cross_system_actions || [];
@@ -168,6 +174,12 @@ export default function AdvisoryCard({ advisory, isSelected, onSelect }) {
               </span>
               <span className="text-xs text-[var(--status-info)]">分鐘</span>
             </div>
+          )}
+
+          {navigation.status === "simulated_published" && (
+            <span className="text-xs px-2 py-0.5 rounded-sm border border-[var(--status-info)]/30 bg-[var(--status-info)]/10 text-[var(--status-info)] font-medium">
+              導航資訊已模擬發布
+            </span>
           )}
 
           {comms.trigger_multilingual_sop6 && (
@@ -292,6 +304,24 @@ export default function AdvisoryCard({ advisory, isSelected, onSelect }) {
                 candidates={analysis?.candidates || primary.excluded_routes}
                 upstream={analysis?.upstream_resolution}
               />
+            </Section>
+          )}
+
+          {navigation.status === "simulated_published" && (
+            <Section title="導航資訊更新">
+              <div className="rounded-md border border-[var(--status-info)]/30 bg-[var(--status-info)]/10 p-3 text-sm">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="font-medium text-[var(--status-info)]">已模擬發布至導航服務</span>
+                  <span className="text-xs text-[var(--muted-foreground)]">
+                    發布時間 {navigation.published_at}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted-foreground)]">
+                  封閉 {navigation.closed_segment_name}；主疏散路徑 {navigation.primary_route?.name}
+                  {navigation.secondary_routes?.length > 0 &&
+                    `；次要疏散 ${navigation.secondary_routes.map((item) => item.name).join("、")}`}
+                </div>
+              </div>
             </Section>
           )}
 
@@ -430,10 +460,12 @@ export default function AdvisoryCard({ advisory, isSelected, onSelect }) {
               </div>
             </details>
           )}
-
-          <CMSInline comms={comms} eventId={advisory.event_id} />
         </div>
       )}
+
+      <div className="px-4 pb-4">
+        <CMSInline comms={comms} eventId={advisory.event_id} />
+      </div>
     </div>
   );
 }

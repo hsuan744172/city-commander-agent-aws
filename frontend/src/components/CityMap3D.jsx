@@ -291,6 +291,7 @@ export default function CityMap3D({
   const mapRef = useRef(null);
   const popupRef = useRef(null);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [mapError, setMapError] = useState("");
   const onSegmentClickRef = useRef(onSegmentClick);
   onSegmentClickRef.current = onSegmentClick;
 
@@ -298,15 +299,30 @@ export default function CityMap3D({
   useEffect(() => {
     if (mapRef.current || !mapContainer.current) return;
 
-    const map = new MaplibreMap({
-      container: mapContainer.current,
-      style: "https://tiles.openfreemap.org/styles/bright",
-      center: [121.5580, 25.0400], // 信義計畫區中心
-      zoom: 14.5,
-      pitch: 50,
-      bearing: -17.6,
-      canvasContextAttributes: { antialias: true },
-    });
+    const probeCanvas = document.createElement("canvas");
+    if (!probeCanvas.getContext("webgl2")) {
+      setMapError("Chrome 目前無法使用 WebGL 2，3D 地圖已暫停顯示。");
+      return;
+    }
+
+    let map;
+    try {
+      map = new MaplibreMap({
+        container: mapContainer.current,
+        style: "https://tiles.openfreemap.org/styles/bright",
+        center: [121.5580, 25.0400], // 信義計畫區中心
+        zoom: 14.5,
+        pitch: 50,
+        bearing: -17.6,
+        canvasContextAttributes: { antialias: true },
+      });
+      mapRef.current = map;
+      setMapError("");
+    } catch (error) {
+      console.error("[CityMap3D] Map initialization error:", error);
+      setMapError("3D 地圖初始化失敗，其他交控資訊仍可正常使用。");
+      return;
+    }
 
     map.addControl(new NavigationControl(), "top-right");
 
@@ -674,8 +690,17 @@ export default function CityMap3D({
     mapRef.current = map;
 
     return () => {
-      map.remove();
-      mapRef.current = null;
+      if (popupRef.current) {
+        popupRef.current.remove();
+        popupRef.current = null;
+      }
+      if (mapRef.current === map) mapRef.current = null;
+      try {
+        map.remove();
+      } catch (error) {
+        // MapLibre may have no renderer to destroy when WebGL initialization fails.
+        console.warn("[CityMap3D] Map cleanup skipped:", error);
+      }
     };
   }, []);
 
@@ -753,6 +778,17 @@ export default function CityMap3D({
     <div className={`relative rounded-xl overflow-hidden border border-gray-200 shadow-sm ${className}`}>
       {/* 地圖容器：使用絕對定位填滿父容器高度 */}
       <div ref={mapContainer} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} />
+      {mapError && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-card p-6 text-center text-card-foreground">
+          <div className="max-w-md rounded-lg border border-border bg-background p-4 shadow-sm">
+            <div className="text-sm font-semibold">3D 地圖目前無法顯示</div>
+            <p className="mt-2 text-sm text-muted-foreground">{mapError}</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              請在 Chrome 系統設定啟用圖形加速並重新啟動瀏覽器。
+            </p>
+          </div>
+        </div>
+      )}
       {/* 圖例 */}
       <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-md text-xs z-10">
         <div className="font-semibold text-gray-700 mb-1.5">路段飽和度</div>

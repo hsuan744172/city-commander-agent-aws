@@ -13,6 +13,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import IncidentResponsePanel from "./IncidentResponsePanel";
 import {
   CONFIRMATION_LABELS,
   fetchInjectionCatalog,
@@ -68,7 +69,7 @@ function editableRecord(record) {
  * 三段式流程：挑選/編輯 live_incidents.json 內容 → 驗證取得預覽 → 勾選確認後注入。
  * 所有驗證與分類都由後端契約層負責，這裡只呈現結果與收集確認。
  */
-export default function InjectionTab({ onInjected }) {
+export default function InjectionTab() {
   const [catalog, setCatalog] = useState(null);
   const [catalogError, setCatalogError] = useState("");
   const [draft, setDraft] = useState("");
@@ -207,7 +208,6 @@ export default function InjectionTab({ onInjected }) {
         adminToken,
       });
       setResult(body);
-      onInjected?.(body.report);
       loadHistory();
     } catch (exc) {
       setError(exc);
@@ -409,7 +409,7 @@ export default function InjectionTab({ onInjected }) {
                 <div className="font-mono text-xs">{result.injection?.injection_id}</div>
               </div>
               <p className="text-xs text-[var(--muted-foreground)] mt-2">
-                建議書已送往「事件處置與建議書」頁與所有連線的儀表板。
+                完整處置建議書已在本頁下方展開，無需切換頁面即可檢視路徑、SOP 與發布通報。
               </p>
             </div>
           )}
@@ -469,6 +469,8 @@ export default function InjectionTab({ onInjected }) {
           <HistoryCard history={history} />
         </div>
       </div>
+
+      {result?.report && <IncidentResponsePanel report={result.report} />}
     </div>
   );
 }
