@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Shield, BarChart3, FileText, Bot } from "lucide-react";
+import { cn } from "./lib/utils";
 import DashboardTab from "./components/DashboardTab";
 import IncidentTab from "./components/IncidentTab";
 import ChatTab from "./components/ChatTab";
@@ -14,15 +15,15 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
+    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] flex flex-col">
       {/* Global Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-3 shadow-sm">
+      <header className="bg-[var(--card)] border-b border-[var(--border)] px-6 py-3 shadow-xs">
         <div className="max-w-[1600px] mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="bg-blue-600 p-2 rounded-lg">
-              <Shield className="w-5 h-5 text-white" />
+            <div className="bg-[var(--primary)] p-2 rounded-lg">
+              <Shield className="w-5 h-5 text-[var(--primary-foreground)]" />
             </div>
-            <h1 className="text-lg font-bold text-gray-900">城市應變指揮官</h1>
+            <h1 className="text-lg font-bold">城市應變指揮官</h1>
           </div>
 
           {/* Tab Navigation */}
@@ -34,11 +35,12 @@ export default function App() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition",
                     active
-                      ? "bg-blue-600 text-white"
-                      : "text-gray-500 hover:text-gray-900 hover:bg-gray-100"
-                  }`}
+                      ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                      : "text-[var(--muted-foreground)] hover:text-[var(--accent-foreground)] hover:bg-[var(--accent)]"
+                  )}
                 >
                   <Icon className="w-4 h-4" />
                   {tab.label}
