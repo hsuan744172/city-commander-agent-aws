@@ -12,7 +12,7 @@ function lineColor(level) {
   return "#3B82F6";
 }
 
-function CustomTooltip({ active, payload, label }) {
+function CustomTooltip({ active, payload, label, levelA = 0.95, levelB = 0.85 }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-[var(--card)] border border-[var(--border)] rounded-lg p-3 shadow-sm min-w-[180px]">
@@ -23,7 +23,7 @@ function CustomTooltip({ active, payload, label }) {
           .sort((a, b) => b.value - a.value)
           .map((p, i) => {
             const pct = Math.round(p.value * 100);
-            const icon = pct >= 95 ? "🔴" : pct >= 85 ? "🟡" : "🟢";
+            const icon = p.value >= levelA ? "🔴" : p.value >= levelB ? "🟡" : "🟢";
             return (
               <div key={i} className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-1.5">
@@ -44,9 +44,12 @@ function CustomTooltip({ active, payload, label }) {
  * selectedSegment：由儀表板點擊路段或事件小卡帶入的路段
  * onClear：有提供時顯示取消選取按鈕
  */
-export default function TrendChart({ selectedSegment, onClear, simTime }) {
+export default function TrendChart({ selectedSegment, onClear, simTime, thresholds }) {
   const [allData, setAllData] = useState([]);
   const chartHeight = 280;
+  // 門檻由後端 /api/status 提供，前端不再自己寫死 0.95 / 0.85
+  const levelA = thresholds?.level_a ?? 0.95;
+  const levelB = thresholds?.level_b ?? 0.85;
 
   // 後端只回傳「截至當下模擬時間」的資料，因此時間一推進就要重抓
   useEffect(() => {
@@ -112,9 +115,21 @@ export default function TrendChart({ selectedSegment, onClear, simTime }) {
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis dataKey="time" stroke="var(--muted-foreground)" fontSize={11} />
             <YAxis stroke="var(--muted-foreground)" fontSize={11} domain={[0, 1.05]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
-            <ReferenceLine y={0.95} stroke="var(--status-error)" strokeDasharray="4 4" strokeOpacity={0.5} />
-            <ReferenceLine y={0.85} stroke="var(--status-warning)" strokeDasharray="4 4" strokeOpacity={0.5} />
-            <Tooltip content={<CustomTooltip />} />
+            <ReferenceLine
+              y={levelA}
+              stroke="var(--status-error)"
+              strokeDasharray="4 4"
+              strokeOpacity={0.5}
+              label={{ value: "A 級", position: "insideTopRight", fontSize: 10, fill: "var(--status-error)" }}
+            />
+            <ReferenceLine
+              y={levelB}
+              stroke="var(--status-warning)"
+              strokeDasharray="4 4"
+              strokeOpacity={0.5}
+              label={{ value: "B 級", position: "insideTopRight", fontSize: 10, fill: "var(--status-warning)" }}
+            />
+            <Tooltip content={<CustomTooltip levelA={levelA} levelB={levelB} />} />
             <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12 }} iconType="circle" iconSize={8} />
             <Line
               type="monotone"

@@ -119,11 +119,22 @@ export default function ThreatGrid({
                 seg.segment_id === selectedSegmentId && "ring-2 ring-[var(--accent)]",
               )}
             >
-              <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center justify-between gap-1 mb-1.5">
                 <span className="text-xs font-medium truncate">{seg.road_name}</span>
-                <span className={cn("text-[10px] px-1.5 py-0.5 rounded-sm font-bold shrink-0", status.cls)}>
-                  {status.text}
-                </span>
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* SOP 第 1 條只有這兩段達級別才啟動應變，其餘僅燈號顯示 */}
+                  {seg.is_trigger_segment && (
+                    <span
+                      title="SOP 第 1 條城市應變觸發路段"
+                      className="text-[9px] px-1 py-0.5 rounded-sm font-bold bg-[var(--accent)] text-[var(--accent-foreground)]"
+                    >
+                      觸發
+                    </span>
+                  )}
+                  <span className={cn("text-[10px] px-1.5 py-0.5 rounded-sm font-bold", status.cls)}>
+                    {status.text}
+                  </span>
+                </div>
               </div>
 
               <div className="w-full bg-[var(--muted)] rounded-full h-2 mb-1.5">

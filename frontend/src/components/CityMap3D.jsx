@@ -70,7 +70,7 @@ const STATION_NAMES = {
 /**
  * 建立站點 GeoJSON — 結合靜態座標與動態人流資料
  */
-function buildStationGeoJSON(stations = []) {
+function buildStationGeoJSON(stations = [], roamingThreshold = 0.3) {
   const stationDataMap = new Map(stations.map((s) => [s.bs_id, s]));
   const features = Object.entries(STATION_COORDS).map(([id, coords]) => {
     const data = stationDataMap.get(id);
@@ -107,9 +107,18 @@ function buildStationGeoJSON(stations = []) {
         name: data?.location_name || STATION_NAMES[id] || id,
         user_count: data?.user_count ?? 0,
         growth_rate: data?.growth_rate ?? 0,
+        // 後端統一以 0~1 表示漫遊率，顯示字串另外給。
+        // 原本這裡假設是 0~100 並直接和 30 比較，換算一改就會靜默失準；
+        // 門檻也改由後端 /api/status 的 thresholds 提供，不在前端寫死。
         roaming_user_pct: data?.roaming_user_pct ?? 0,
+        roaming_display:
+          data?.roaming_user_pct_display ??
+          `${Math.round((data?.roaming_user_pct ?? 0) * 100)}%`,
         stay_time_avg: data?.stay_time_avg ?? 0,
-        has_roaming_alert: (data?.roaming_user_pct ?? 0) >= 30 ? 1 : 0,
+        has_roaming_alert:
+          data?.exceeds_sop6_threshold ?? (data?.roaming_user_pct ?? 0) >= roamingThreshold
+            ? 1
+            : 0,
         radius: radius,
         fill_color: fillColor,
         stroke_color: strokeColor,
@@ -277,6 +286,7 @@ export default function CityMap3D({
   stations = [],
   selectedSegmentId = null,
   onSegmentClick,
+  thresholds = null,
   className = "",
 }) {
   const mapContainer = useRef(null);
@@ -597,7 +607,7 @@ export default function CityMap3D({
             <strong style="font-size:14px">${props.name}</strong>
             <div style="margin-top:4px">人流：<b>${Number(props.user_count).toLocaleString()}</b> 人</div>
             <div>增長率：<b>${rateLabel}</b></div>
-            <div>漫遊率：${props.roaming_user_pct}%</div>
+            <div>漫遊率：${props.roaming_display}</div>
             <div style="color:#666;font-size:11px">平均停留 ${props.stay_time_avg} 分鐘</div>
             ${roamingAlert}
           </div>
@@ -757,9 +767,9 @@ export default function CityMap3D({
     const source = map.getSource("stations");
     if (!source) return;
 
-    const geojson = buildStationGeoJSON(stations);
+    const geojson = buildStationGeoJSON(stations, thresholds?.sop6_roaming ?? 0.3);
     source.setData(geojson);
-  }, [stations, mapLoaded]);
+  }, [stations, mapLoaded, thresholds]);
 
   return (
     <div className={`relative rounded-xl overflow-hidden border border-gray-200 shadow-sm ${className}`}>

@@ -37,17 +37,21 @@ const INCIDENT_COORDS = {
   BS_MRT_BL18: [25.03500, 121.56400],
 };
 
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
-  iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
-  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
-});
+// 事故點標記改用內嵌 SVG。原本從 cdnjs 與 raw.githubusercontent.com 抓 PNG，
+// Demo 現場只要對外網路不通或 GitHub raw 被擋，地圖標記就整個破圖。
+// 內嵌 data URI 一併省掉三個外部請求，也不需要處理 Leaflet 的 bundler 圖片路徑問題。
+const INCIDENT_MARKER_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" width="26" height="38" viewBox="0 0 26 38">
+  <path d="M13 0C5.8 0 0 5.8 0 13c0 9.2 13 25 13 25s13-15.8 13-25C26 5.8 20.2 0 13 0z"
+        fill="#DC2626" stroke="#ffffff" stroke-width="2"/>
+  <circle cx="13" cy="13" r="4.5" fill="#ffffff"/>
+</svg>`.trim();
 
-const redIcon = new L.Icon({
-  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png",
-  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
-  iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34],
+const incidentIcon = new L.Icon({
+  iconUrl: `data:image/svg+xml;utf8,${encodeURIComponent(INCIDENT_MARKER_SVG)}`,
+  iconSize: [26, 38],
+  iconAnchor: [13, 38],
+  popupAnchor: [0, -32],
 });
 
 function FlyTo({ center }) {
@@ -92,7 +96,7 @@ export default function IncidentMap({ advisory }) {
         {primaryLine && <Polyline positions={primaryLine} pathOptions={{ color: "#16A34A", weight: 5, opacity: 0.9, dashArray: "12,6" }} />}
         {secondaryLines.map((line, idx) => <Polyline key={idx} positions={line} pathOptions={{ color: "#2563EB", weight: 4, opacity: 0.7, dashArray: "8,8" }} />)}
 
-        <Marker position={incidentCoord} icon={redIcon}>
+        <Marker position={incidentCoord} icon={incidentIcon}>
           <Popup><strong>{eid.location || affectedSeg}</strong></Popup>
         </Marker>
       </MapContainer>

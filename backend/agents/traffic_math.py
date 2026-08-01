@@ -1,7 +1,8 @@
 """
-交通數學計算模組 — 嚴格依據 emergency_traffic_sop.txt 第 2 條與第 7 條。
+交通數學計算模組 — 嚴格依據 emergency_traffic_sop.txt 第 2、6、7 條。
 
 ⚠️ 全局約束：所有數值計算只在此模組執行，Agent 禁止自行推算。
+   門檻與規則常數一律取自 backend/agents/sop_rules.py，此處不自行定義。
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from pathlib import Path
 import pandas as pd
 
 from backend import sim_clock
+from backend.agents import sop_rules
 from backend.data_source import get_data_path
 
 TRAFFIC_FLOW_FILE = "city_traffic_flow.csv"
@@ -186,10 +188,14 @@ def get_current_traffic_context(timestamp: str | None = None) -> dict:
     data_timestamp = data_as_of(time_df) or ts.strftime(sim_clock.TIME_FMT)
     segments = []
     for _, row in time_df.iterrows():
+        score = float(row["Saturation_Score"])
+        level = sop_rules.assess_congestion_level(score)
         segments.append({
             "路段編號": row["Segment_ID"],
             "路段名稱": row["Road_Name"],
-            "飽和度": f"{round(float(row['Saturation_Score']) * 100)}%",
+            "飽和度": f"{round(score * 100)}%",
+            "SOP第1條分級": sop_rules.level_description(level),
+            "城市應變觸發路段": sop_rules.is_trigger_segment(row["Segment_ID"]),
             "平均車速": f"{float(row['Avg_Speed']):g} 公里/小時",
             "車流量": f"{int(row['Vehicle_Count'])} 輛",
             "車道狀態": row["Lane_Status"],
@@ -201,24 +207,72 @@ def get_current_traffic_context(timestamp: str | None = None) -> dict:
     }
 
 
-def calculate_optimal_route(incident_segment_id: str, timestamp: str | None = None) -> dict:
-    """
-    SOP 第 2 條：從事故路段的 alternatives 篩選主疏散路徑。
+def get_current_crowd_context(timestamp: str | None = None) -> dict:
+    """回傳可直接提供給 Agent 的人流與漫遊資料（SOP 第 3、4、6 條判定依據）。"""
+    roaming = scan_roaming(timestamp)
+    stations = []
+    for station in roaming["stations"]:
+        stations.append({
+            "基地台編號": station["bs_id"],
+            "地點": station["location_name"],
+            "人數": f"{station['user_count']:,} 人",
+            "平均停留": f"{station['stay_time_avg']} 分鐘",
+            "人流增幅": f"{station['growth_rate'] * 100:.0f}%",
+            "漫遊率": station["roaming_user_pct_display"],
+            "漫遊率達SOP第6條門檻": station["exceeds_sop6_threshold"],
+        })
+    return {
+        "資料時間": roaming["data_as_of"] or roaming["query_timestamp"],
+        "基地台總數": roaming["total_stations"],
+        "SOP第6條多語觸發": roaming["triggered"],
+        "SOP第6條觸發站點": [s["location_name"] for s in roaming["trigger_stations"]],
+        "基地台狀態": stations,
+    }
 
-    篩選邏輯 (嚴格對齊 SOP 原文)：
+
+def get_network_context() -> dict:
+    """路網靜態幾何摘要，供 Agent 回答替代路徑與相交關係問題（不隨時間變動）。"""
+    segments = []
+    for seg in _load_road_network():
+        segments.append({
+            "路段編號": seg["segment_id"],
+            "路段名稱": seg["name"],
+            "車流方向": seg.get("flow_direction", ""),
+            "承載容量": f"{seg.get('capacity_vph', 0)} 車/小時",
+            "相交路段_上游至下游": seg.get("intersections", []),
+            "建議分流方向_單向": seg.get("alternatives", []),
+            "周邊基地台": seg.get("nearby_stations", []),
+        })
+    return {"路段總數": len(segments), "路網幾何": segments}
+
+
+def _percent(value: float) -> str:
+    return f"{round(float(value) * 100)}%"
+
+
+def calculate_optimal_route(
+    incident_segment_id: str,
+    timestamp: str | None = None,
+    incident_location: str = "",
+) -> dict:
+    """
+    SOP 第 2 條 (a)：從事故路段的 alternatives 篩選主疏散路徑。
+
+    篩選條件 (逐項對齊 SOP 原文)：
       1. capacity_vph >= 1000
       2. 替代路段名稱出現在事故路段的 intersections (代表直接相交)
-      3. 位於上游 (intersections 陣列中，排序在前者為上游)
+      3. 相交路口位於事故點上游 (依 flow_direction 與 intersections 之上游→下游排序判定)
+    取通過篩選且 Saturation_Score 最低者為主疏散；位於下游之相交幹道僅列次要疏散。
 
-    Fallback 機制：
-      - 若無上游路段符合 → 取所有相交路段中飽和度最低者
-      - 若無相交路段符合 → 取所有 alternatives 中 capacity>=1000 且飽和度最低者
-      - 絕不回傳 null
+    incident_location 用於定位事故點落在哪個相交路口的哪一側；未提供或無法定位時，
+    退回「intersections 前半視為上游」的啟發式，並在 upstream_resolution 標明方法。
+
+    每個 alternative 都會出現在 candidates 中（含未通過者）並附上通過或排除的理由，
+    以滿足「說明排除其他候選之理由」的要求。
     """
     road_network = _load_road_network()
     traffic_df = _load_traffic_flow()
 
-    # 找事故路段
     incident_info = None
     for seg in road_network:
         if seg["segment_id"] == incident_segment_id:
@@ -228,105 +282,353 @@ def calculate_optimal_route(incident_segment_id: str, timestamp: str | None = No
     if incident_info is None:
         return {"error": f"找不到路段 {incident_segment_id}"}
 
-    alternatives = incident_info["alternatives"]
-    intersections = incident_info["intersections"]  # 上游→下游排序
+    alternatives = list(incident_info.get("alternatives") or [])
+    intersections = list(incident_info.get("intersections") or [])  # 上游→下游排序
+    flow_direction = incident_info.get("flow_direction", "")
+    incident_name = incident_info.get("name", "")
     segment_map = {s["segment_id"]: s for s in road_network}
+
+    upstream = sop_rules.resolve_upstream(intersections, flow_direction, incident_location)
 
     time_df, ts = _get_time_slice(traffic_df, timestamp, key_col="Segment_ID")
 
-    # 為每個 alternative 計算資訊
-    all_candidates = []
+    candidates: list[dict] = []
     for alt_id in alternatives:
         alt_info = segment_map.get(alt_id)
         if not alt_info:
+            candidates.append({
+                "segment_id": alt_id,
+                "name": alt_id,
+                "capacity_vph": 0,
+                "saturation_score": None,
+                "capacity_ok": False,
+                "is_intersecting": False,
+                "is_upstream": False,
+                "is_congested": False,
+                "tier": 0,
+                "role": "excluded",
+                "reason": "路網幾何資料中查無此路段",
+            })
             continue
 
-        # 條件 1: capacity >= 1000
-        if alt_info["capacity_vph"] < 1000:
-            continue
+        alt_name = alt_info.get("name", alt_id)
+        capacity = int(alt_info.get("capacity_vph") or 0)
+        capacity_ok = capacity >= sop_rules.SOP2_MIN_CAPACITY_VPH
 
-        alt_name = alt_info["name"]
-
-        # 條件 2: 替代路段名稱出現在事故路段的 intersections
         is_intersecting = alt_name in intersections
+        intersection_index = intersections.index(alt_name) if is_intersecting else -1
+        is_upstream = is_intersecting and upstream.is_upstream(intersection_index)
 
-        # 條件 3: 上游判定 (intersections 陣列前半為上游)
-        is_upstream = False
-        if is_intersecting:
-            midpoint = len(intersections) / 2
-            idx = intersections.index(alt_name)
-            is_upstream = idx < midpoint
-
-        # 取飽和度
         alt_flow = time_df[time_df["Segment_ID"] == alt_id]
-        saturation = float(alt_flow.iloc[0]["Saturation_Score"]) if not alt_flow.empty else 0.5
+        has_flow = not alt_flow.empty
+        saturation = float(alt_flow.iloc[0]["Saturation_Score"]) if has_flow else None
 
-        all_candidates.append({
+        if not capacity_ok:
+            tier, reason = 0, (
+                f"承載容量 {capacity} 車/小時 未達 SOP 第 2 條 (1) 的 "
+                f"{sop_rules.SOP2_MIN_CAPACITY_VPH} 車/小時門檻"
+            )
+        elif is_intersecting and is_upstream:
+            tier, reason = 1, "符合 SOP 第 2 條 (1)(2)(3)：容量足夠、與事故路段直接相交且位於上游"
+        elif is_intersecting:
+            tier, reason = 2, (
+                f"與事故路段直接相交，但相交路口位於事故點下游"
+                f"（{upstream.detail}），依 SOP 第 2 條僅列次要疏散"
+            )
+        else:
+            tier, reason = 3, (
+                f"未出現在{incident_name}的 intersections 清單中，"
+                "不符 SOP 第 2 條 (2) 的直接相交要求"
+            )
+
+        candidates.append({
             "segment_id": alt_id,
             "name": alt_name,
-            "capacity_vph": alt_info["capacity_vph"],
-            "saturation_score": round(saturation, 4),
+            "capacity_vph": capacity,
+            "saturation_score": round(saturation, 4) if saturation is not None else None,
+            "saturation_available": has_flow,
+            "capacity_ok": capacity_ok,
             "is_intersecting": is_intersecting,
+            "intersection_index": intersection_index,
             "is_upstream": is_upstream,
-            "is_congested": saturation >= 0.85,
+            "is_congested": bool(saturation is not None and saturation >= sop_rules.LEVEL_B_THRESHOLD),
+            "tier": tier,
+            "role": "excluded",
+            "reason": reason,
         })
 
-    # --- 分層篩選 (絕不回傳 null) ---
+    def by_saturation(items: list[dict]) -> list[dict]:
+        # 無車流資料者排在最後：沒有量測值就不該被選為主疏散
+        return sorted(
+            items,
+            key=lambda c: (c["saturation_score"] is None, c["saturation_score"] or 0.0),
+        )
 
-    # 第一層：完全符合 SOP (上游 + 相交 + capacity>=1000)
-    tier1 = [c for c in all_candidates if c["is_upstream"] and c["is_intersecting"]]
-    tier1.sort(key=lambda x: x["saturation_score"])
+    tier1 = by_saturation([c for c in candidates if c["tier"] == 1])
+    tier2 = by_saturation([c for c in candidates if c["tier"] == 2])
+    tier3 = by_saturation([c for c in candidates if c["tier"] == 3])
 
-    # 第二層 Fallback：相交但位於下游
-    tier2 = [c for c in all_candidates if c["is_intersecting"] and not c["is_upstream"]]
-    tier2.sort(key=lambda x: x["saturation_score"])
-
-    # 第三層 Fallback：任何 capacity>=1000 的 alternative
-    tier3 = [c for c in all_candidates if not c["is_intersecting"]]
-    tier3.sort(key=lambda x: x["saturation_score"])
-
-    # 決定主疏散
+    # --- 決定主疏散與次要疏散（分層退階，絕不回傳 null） ---
     if tier1:
         primary = tier1[0]
-        selection_reason = "SOP 第 2 條：上游相交路段，飽和度最低"
+        selection_tier = 1
+        selection_reason = (
+            f"依 SOP 第 2 條 (a)：{primary['name']} 容量 {primary['capacity_vph']} 車/小時、"
+            f"與{incident_name}直接相交且位於事故點上游（{upstream.detail}），"
+            f"為通過篩選者中飽和度最低（{_percent(primary['saturation_score'] or 0)}）"
+        )
+        # SOP：「位於下游之相交幹道僅列次要疏散」
+        secondary = [c for c in tier2 if c["segment_id"] != primary["segment_id"]]
     elif tier2:
         primary = tier2[0]
-        selection_reason = "Fallback：下游相交路段，飽和度最低"
+        selection_tier = 2
+        selection_reason = (
+            f"退階第一層：{incident_name}的替代道路中無「相交且位於上游」者，"
+            f"改取相交路段中飽和度最低的 {primary['name']}"
+            f"（{_percent(primary['saturation_score'] or 0)}）"
+        )
+        secondary = [c for c in tier2[1:]]
     elif tier3:
         primary = tier3[0]
-        selection_reason = "Fallback：替代路段中容量足夠且飽和度最低"
+        selection_tier = 3
+        selection_reason = (
+            f"退階第二層：{incident_name}的替代道路均未列於其 intersections（依命題定義 "
+            "alternatives 為單向建議，不可反推相交關係），SOP 第 2 條 (2)(3) 無可行解；"
+            f"改依容量 ≥ {sop_rules.SOP2_MIN_CAPACITY_VPH} 且飽和度最低取 {primary['name']}"
+            f"（{_percent(primary['saturation_score'] or 0)}）"
+        )
+        secondary = [c for c in tier3[1:]]
     else:
-        # 極端情況：所有 alternatives 容量都 < 1000
+        fallback_id = alternatives[0] if alternatives else ""
         primary = {
-            "segment_id": alternatives[0] if alternatives else "",
-            "name": segment_map.get(alternatives[0], {}).get("name", "") if alternatives else "",
-            "capacity_vph": 0,
-            "saturation_score": 1.0,
+            "segment_id": fallback_id,
+            "name": segment_map.get(fallback_id, {}).get("name", "") if fallback_id else "",
+            "capacity_vph": int(segment_map.get(fallback_id, {}).get("capacity_vph", 0) or 0),
+            "saturation_score": None,
+            "saturation_available": False,
+            "capacity_ok": False,
             "is_intersecting": False,
+            "intersection_index": -1,
             "is_upstream": False,
             "is_congested": True,
+            "tier": 0,
+            "role": "primary",
+            "reason": "所有替代道路容量均未達門檻",
         }
-        selection_reason = "緊急 Fallback：無符合條件路段，建議併行大眾運輸"
+        selection_tier = 0
+        selection_reason = (
+            "緊急退階：所有替代道路容量均未達 SOP 第 2 條 (1) 門檻，"
+            "維持既有動線並優先以大眾運輸疏運"
+        )
+        secondary = []
+        candidates.append(primary)
 
-    # 壅塞標記
+    primary["role"] = "primary"
+    for candidate in secondary:
+        candidate["role"] = "secondary"
+
+    excluded = [c for c in candidates if c["role"] == "excluded"]
+
     congestion_note = ""
-    if primary["is_congested"]:
-        congestion_note = "主疏散路段已壅塞，維持該路徑並啟動長綠燈時制，建議併行大眾運輸"
+    if primary.get("is_congested"):
+        # SOP 第 2 條：主疏散已壅塞仍維持該路徑，但須註明並建議併行大眾運輸
+        congestion_note = (
+            f"主疏散路段{primary['name']}飽和度已達 "
+            f"{_percent(primary['saturation_score'] or 0)}，"
+            f"依 SOP 第 2 條維持該路徑並啟動長綠燈時制"
+            f"（綠燈配時 +{sop_rules.GREEN_LIGHT_EXTENSION_PCT}%），建議併行大眾運輸疏運"
+        )
 
     return {
         "incident_segment_id": incident_segment_id,
-        "incident_name": incident_info["name"],
+        "incident_name": incident_name,
+        "incident_location": incident_location,
+        "flow_direction": flow_direction,
+        "intersections": intersections,
         "query_timestamp": ts.strftime(sim_clock.TIME_FMT),
         "data_as_of": data_as_of(time_df),
         "primary_route": primary,
+        "selection_tier": selection_tier,
         "selection_reason": selection_reason,
         "congestion_note": congestion_note,
-        "secondary_routes": tier2 if tier1 else tier3,
-        "all_candidates": all_candidates,
+        "secondary_routes": secondary,
+        "excluded_routes": excluded,
+        "all_candidates": candidates,
+        "upstream_resolution": {
+            "method": upstream.method,
+            "matched_intersection": upstream.matched_intersection,
+            "incident_side": upstream.incident_side,
+            "downstream_side": upstream.downstream_side,
+            "detail": upstream.detail,
+            "upstream_intersections": [
+                intersections[i] for i in sorted(upstream.upstream_indices) if i < len(intersections)
+            ],
+        },
     }
 
 
-def calculate_ete(severity: str, affected_segment_ids: list[str], timestamp: str | None = None) -> dict:
+def segment_info(segment_id: str) -> dict:
+    """路網幾何中的單一路段；查無時回傳空 dict。"""
+    for seg in _load_road_network():
+        if seg["segment_id"] == segment_id:
+            return seg
+    return {}
+
+
+def segment_name(segment_id: str) -> str:
+    """路段全名。CMS 文案的「<路段>」一律用這個，不要用事件的 location 描述。"""
+    return segment_info(segment_id).get("name", "")
+
+
+SIGNAL_SCOPE_SOP1 = "sop1_all_alternatives"
+SIGNAL_SCOPE_SOP2 = "sop2_primary_only"
+
+
+def build_signal_plan(
+    segment_id: str,
+    timestamp: str | None = None,
+    duration_minutes: float | None = None,
+    primary_route_id: str = "",
+    scope: str | None = None,
+) -> dict:
+    """
+    號誌配時與警力處置。兩種範圍，對應兩條不同的 SOP：
+
+    SIGNAL_SCOPE_SOP1（城市應變觸發路段達 B/A 級）
+        SOP 第 1 條：「將其替代道路 (見該路段 alternatives) 綠燈配時 +25%，
+        並調度警力淨空路口」→ alternatives 全集加綠燈，並輸出警力淨空需求。
+        原本只對主疏散一條加綠燈、警力完全沒輸出。
+
+    SIGNAL_SCOPE_SOP2（非觸發路段的事故）
+        SOP 第 2 條 (a)：主疏散路段已壅塞時才「啟動長綠燈時制」→ 只調整主疏散一條。
+
+    scope 留空時依 segment_id 是否為觸發路段自動選擇。
+    """
+    info = segment_info(segment_id)
+    if not info:
+        return {"error": f"找不到路段 {segment_id}"}
+
+    if scope is None:
+        scope = (
+            SIGNAL_SCOPE_SOP1
+            if sop_rules.is_trigger_segment(segment_id)
+            else SIGNAL_SCOPE_SOP2
+        )
+
+    traffic_df = _load_traffic_flow()
+    time_df, ts = _get_time_slice(traffic_df, timestamp, key_col="Segment_ID")
+
+    def saturation_of(seg_id: str) -> float | None:
+        row = time_df[time_df["Segment_ID"] == seg_id]
+        return round(float(row.iloc[0]["Saturation_Score"]), 4) if not row.empty else None
+
+    own_saturation = saturation_of(segment_id)
+    level = (
+        sop_rules.assess_congestion_level(own_saturation)
+        if own_saturation is not None
+        else "Normal"
+    )
+
+    if scope == SIGNAL_SCOPE_SOP1:
+        target_ids = list(info.get("alternatives") or [])
+        sop_reference = "SOP 第 1 條：城市應變觸發路段達級別，替代道路長綠燈時制並淨空路口"
+    else:
+        target_ids = [primary_route_id] if primary_route_id else []
+        sop_reference = "SOP 第 2 條 (a)：主疏散路段啟動長綠燈時制"
+
+    adjustments = []
+    for alt_id in target_ids:
+        alt = segment_info(alt_id)
+        if not alt:
+            continue
+        adjustments.append({
+            "segment_id": alt_id,
+            "road_name": alt.get("name", alt_id),
+            "action": f"綠燈配時 +{sop_rules.GREEN_LIGHT_EXTENSION_PCT}%（長綠燈時制）",
+            "current_saturation": saturation_of(alt_id),
+            "capacity_vph": int(alt.get("capacity_vph") or 0),
+            "is_primary_route": alt_id == primary_route_id,
+        })
+
+    intersections = list(info.get("intersections") or [])
+    window = ""
+    if duration_minutes:
+        end = pd.Timestamp(ts) + pd.Timedelta(minutes=float(duration_minutes))
+        window = (
+            f"自 {pd.Timestamp(ts).strftime(sim_clock.TIME_FMT)} 起 "
+            f"{int(round(float(duration_minutes)))} 分鐘"
+            f"（至 {end.strftime(sim_clock.TIME_FMT)}），視現場狀況滾動延長"
+        )
+
+    return {
+        "segment_id": segment_id,
+        "road_name": info.get("name", segment_id),
+        "saturation_score": own_saturation,
+        "level": level,
+        "level_description": sop_rules.level_description(level),
+        "is_trigger_segment": sop_rules.is_trigger_segment(segment_id),
+        "scope": scope,
+        "sop_reference": sop_reference,
+        "adjustments": adjustments,
+        # 警力淨空路口是 SOP 第 1 條對觸發路段的處置，非觸發路段不套用
+        "police_dispatch": (
+            {
+                "intersections": intersections,
+                "officers": sop_rules.police_required(len(intersections)),
+                "per_intersection": sop_rules.SOP5_POLICE_PER_INTERSECTION,
+                "instruction": (
+                    f"調度警力淨空 {'、'.join(intersections)} 等 {len(intersections)} 處路口"
+                    if intersections
+                    else "該路段無相交路口資料，警力配置待現場回報"
+                ),
+            }
+            if scope == SIGNAL_SCOPE_SOP1
+            else None
+        ),
+        "duration_minutes": duration_minutes,
+        "window": window,
+        "query_timestamp": pd.Timestamp(ts).strftime(sim_clock.TIME_FMT),
+        "data_as_of": data_as_of(time_df),
+    }
+
+
+def affected_segments_for_ete(
+    incident_segment_id: str,
+    route_result: dict | None = None,
+) -> list[str]:
+    """
+    SOP 第 7 條「受影響路段」的唯一定義。
+
+    = 事故路段 + 主疏散路段 + 次要疏散路段。
+
+    採這個定義的理由：ETE 要估的是「這起事件造成的交通影響何時消退」，而分流指令
+    會把車流導向主／次疏散路段，因此這幾條才是直接受影響者。原本的做法是把全市
+    所有飽和度 ≥ 0.85 的路段都算進平均，會把與事件無關的壅塞稀釋進來，而且儀表板
+    與建議書用了兩套不同的集合，同一事件會算出兩個 ETE。
+    """
+    ordered: list[str] = []
+
+    def push(segment_id: object) -> None:
+        text = str(segment_id or "").strip()
+        if text and text.startswith(sop_rules.SOP2_ROAD_PREFIX) and text not in ordered:
+            ordered.append(text)
+
+    push(incident_segment_id)
+    route_result = route_result if isinstance(route_result, dict) else {}
+    primary = route_result.get("primary_route")
+    if isinstance(primary, dict):
+        push(primary.get("segment_id"))
+    for candidate in route_result.get("secondary_routes") or []:
+        if isinstance(candidate, dict):
+            push(candidate.get("segment_id"))
+    return ordered
+
+
+def calculate_ete(
+    severity: str,
+    affected_segment_ids: list[str],
+    timestamp: str | None = None,
+) -> dict:
     """
     SOP 第 7 條：預計恢復時間計算。
 
@@ -335,40 +637,112 @@ def calculate_ete(severity: str, affected_segment_ids: list[str], timestamp: str
       - base_clearance: Critical=60, High=40, Medium=20 (分鐘)
       - congestion_penalty = (受影響路段平均 Saturation_Score - 0.5) * 60
         若結果小於 0，以 0 計。
-    """
-    base_map = {"Critical": 60, "High": 40, "Medium": 20}
-    severity_normalized = severity.strip().capitalize()
-    if severity_normalized not in base_map:
-        return {"error": f"不支援的 severity: {severity}，僅接受 Critical/High/Medium"}
 
-    base_clearance = base_map[severity_normalized]
+    受影響路段一律由 affected_segments_for_ete() 決定，呼叫端不要自行組集合。
+    若受影響路段完全查無車流量測，不會偷偷代入預設飽和度：壅塞懲罰以 0 計，
+    並在 saturation_data_available / note 明確標示，避免產出無依據的數字。
+    """
+    severity_normalized = (severity or "").strip().capitalize()
+    if severity_normalized not in sop_rules.ETE_BASE_CLEARANCE:
+        return {
+            "error": (
+                f"不支援的 severity: {severity}，僅接受 "
+                f"{'/'.join(sop_rules.ETE_BASE_CLEARANCE)}"
+            )
+        }
+
+    base_clearance = sop_rules.ETE_BASE_CLEARANCE[severity_normalized]
+    requested = [str(s) for s in (affected_segment_ids or [])]
+
     traffic_df = _load_traffic_flow()
     time_df, ts = _get_time_slice(traffic_df, timestamp, key_col="Segment_ID")
+    affected_df = time_df[time_df["Segment_ID"].isin(requested)]
 
-    affected_df = time_df[time_df["Segment_ID"].isin(affected_segment_ids)]
-    avg_saturation = float(affected_df["Saturation_Score"].mean()) if not affected_df.empty else 0.5
+    has_data = not affected_df.empty
+    if has_data:
+        avg_saturation = float(affected_df["Saturation_Score"].mean())
+        congestion_penalty = round(
+            max(
+                0.0,
+                (avg_saturation - sop_rules.ETE_SATURATION_BASELINE)
+                * sop_rules.ETE_SATURATION_FACTOR,
+            ),
+            2,
+        )
+        note = ""
+    else:
+        avg_saturation = None
+        congestion_penalty = 0.0
+        note = "受影響路段查無車流量測，壅塞懲罰以 0 計，ETE 僅採基礎清除時間"
 
-    # 官方公式
-    congestion_penalty = max(0, (avg_saturation - 0.5) * 60)
-    congestion_penalty = round(congestion_penalty, 2)
-    ete_minutes = round(base_clearance + congestion_penalty, 2)
+    breakdown = []
+    for segment_id in requested:
+        row = affected_df[affected_df["Segment_ID"] == segment_id]
+        if row.empty:
+            breakdown.append({
+                "segment_id": segment_id,
+                "road_name": "",
+                "saturation_score": None,
+                "available": False,
+            })
+            continue
+        record = row.iloc[0]
+        breakdown.append({
+            "segment_id": segment_id,
+            "road_name": record["Road_Name"],
+            "saturation_score": round(float(record["Saturation_Score"]), 4),
+            "available": True,
+        })
 
     return {
         "severity": severity_normalized,
         "base_clearance_minutes": base_clearance,
-        "avg_saturation_score": round(avg_saturation, 4),
+        "avg_saturation_score": round(avg_saturation, 4) if avg_saturation is not None else None,
         "congestion_penalty_minutes": congestion_penalty,
-        "ete_minutes": ete_minutes,
-        "formula": "ETE = base_clearance + max(0, (avg_saturation - 0.5) × 60)",
+        "ete_minutes": round(base_clearance + congestion_penalty, 2),
+        "formula": sop_rules.ETE_FORMULA,
+        "saturation_data_available": has_data,
+        "note": note,
         "query_timestamp": ts.strftime(sim_clock.TIME_FMT),
         "data_as_of": data_as_of(affected_df),
+        "affected_segment_ids": requested,
+        "affected_segments": breakdown,
         "affected_segments_found": len(affected_df),
-        "affected_segments_requested": len(affected_segment_ids),
+        "affected_segments_requested": len(requested),
+    }
+
+
+# ---------------------------------------------------------------------------
+# SOP 第 6 條 — 漫遊率
+# ---------------------------------------------------------------------------
+
+
+def _station_record(record: pd.Series) -> dict:
+    roaming_val = record["Roaming_User_Pct"]
+    if isinstance(roaming_val, str):
+        roaming_pct = float(roaming_val.replace("%", "").strip()) / 100
+    else:
+        roaming_pct = float(roaming_val)
+
+    growth_val = record.get("Growth_Rate", 0)
+    if isinstance(growth_val, str):
+        growth_val = float(growth_val.replace("%", "").strip())
+
+    return {
+        "bs_id": record["BS_ID"],
+        "location_name": record["Location_Name"],
+        "user_count": int(round(float(record["User_Count"]))),
+        "stay_time_avg": int(round(float(record.get("Stay_Time_Avg", 0) or 0))),
+        "growth_rate": round(float(growth_val or 0), 4),
+        "roaming_user_pct": round(roaming_pct, 4),
+        "roaming_user_pct_display": f"{roaming_pct * 100:.1f}%",
+        "exceeds_sop6_threshold": roaming_pct >= sop_rules.SOP6_ROAMING_THRESHOLD,
+        "data_as_of": pd.Timestamp(record["Timestamp"]).strftime(sim_clock.TIME_FMT),
     }
 
 
 def check_roaming_rate(bs_id: str, timestamp: str | None = None) -> dict:
-    """查詢指定基地台漫遊率 (SOP 第 6 條判定用)。"""
+    """查詢單一基地台漫遊率。注意 SOP 第 6 條的觸發判定請用 scan_roaming()。"""
     crowd_df = _load_crowd_density()
     bs_df = crowd_df[crowd_df["BS_ID"] == bs_id]
     if bs_df.empty:
@@ -378,20 +752,121 @@ def check_roaming_rate(bs_id: str, timestamp: str | None = None) -> dict:
     if time_slice.empty:
         return {"error": f"基地台 {bs_id} 在指定時間無資料"}
 
-    record = time_slice.iloc[0]
-    roaming_val = record["Roaming_User_Pct"]
-    if isinstance(roaming_val, str):
-        roaming_pct = float(roaming_val.replace("%", "").strip()) / 100
-    else:
-        roaming_pct = float(roaming_val)
+    payload = _station_record(time_slice.iloc[0])
+    payload["query_timestamp"] = pd.Timestamp(ts).strftime(sim_clock.TIME_FMT)
+    # 保留舊欄位名讓既有呼叫端不致失效，但語意已改為「本站是否超標」
+    payload["trigger_sop6_multilingual"] = payload["exceeds_sop6_threshold"]
+    return payload
+
+
+def crowd_snapshot(timestamp: str | None = None) -> dict:
+    """
+    查詢時間當下的全基地台人流切片。
+
+    切片語意與車流一致（統一由 _get_time_slice 決定 interpolate / asof / exact），
+    所以儀表板顯示的數字與 SOP 判定用的數字保證同源。
+    """
+    crowd_df = _load_crowd_density()
+    time_df, ts = _get_time_slice(crowd_df, timestamp, key_col="BS_ID")
+    stations = [_station_record(row) for _, row in time_df.iterrows()]
+    stations.sort(key=lambda s: s["bs_id"])
+    return {
+        "query_timestamp": pd.Timestamp(ts).strftime(sim_clock.TIME_FMT),
+        "data_as_of": data_as_of(time_df),
+        "total_stations": len(stations),
+        "stations": stations,
+    }
+
+
+def scan_roaming(timestamp: str | None = None) -> dict:
+    """
+    SOP 第 6 條觸發判定：掃描**全部**基地台，任一站點 Roaming_User_Pct >= 30% 即觸發。
+
+    原本的實作只檢查事故路段的 nearby_stations，範圍比 SOP 原文窄。實測在三個官方
+    事件的發生時間，周邊基地台都低於 30%，但全市的台北101廣場與 ATT4FUN 周邊早已
+    超標，導致多語通報永遠不會觸發。此函式是 SOP 第 6 條唯一的判定入口。
+    """
+    snapshot = crowd_snapshot(timestamp)
+    stations = snapshot["stations"]
+    triggers = [s for s in stations if s["exceeds_sop6_threshold"]]
+    triggers.sort(key=lambda s: s["roaming_user_pct"], reverse=True)
+
+    return {
+        "query_timestamp": snapshot["query_timestamp"],
+        "data_as_of": snapshot["data_as_of"],
+        "threshold": sop_rules.SOP6_ROAMING_THRESHOLD,
+        "threshold_display": f"{sop_rules.SOP6_ROAMING_THRESHOLD * 100:.0f}%",
+        "triggered": bool(triggers),
+        "scope": "全資料集所有基地台",
+        "total_stations": len(stations),
+        "trigger_stations": triggers,
+        "stations": stations,
+        "languages": list(
+            sop_rules.SOP6_LANGUAGES if triggers else sop_rules.SOP6_DEFAULT_LANGUAGES
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# SOP 第 3、4 條 — 人流門檻與歷史峰值
+# ---------------------------------------------------------------------------
+
+
+def station_history(bs_id: str, timestamp: str | None = None) -> dict:
+    """
+    截至查詢時間的單站人流歷史，含歷史峰值 — 供 SOP 第 4 條「峰值曾達 >= 30,000」判定。
+
+    峰值本質上是累積狀態，一律只看 <= 查詢時間的實際量測，不套用插值，
+    也不會碰到查詢時間之後的資料。
+    """
+    crowd_df = _load_crowd_density()
+    bs_df = crowd_df[crowd_df["BS_ID"] == bs_id]
+    if bs_df.empty:
+        return {"error": f"找不到基地台 {bs_id}"}
+
+    ts = sim_clock.resolve(timestamp)
+    history = bs_df[bs_df["Timestamp"] <= ts].sort_values("Timestamp")
+    if history.empty:
+        return {
+            "bs_id": bs_id,
+            "location_name": str(bs_df.iloc[0]["Location_Name"]),
+            "query_timestamp": pd.Timestamp(ts).strftime(sim_clock.TIME_FMT),
+            "samples": 0,
+            "peak_user_count": None,
+            "peak_at": None,
+            "current_user_count": None,
+            "current_growth_rate": None,
+            "data_as_of": None,
+        }
+
+    peak_row = history.loc[history["User_Count"].idxmax()]
+    latest = history.iloc[-1]
+    growth_val = latest["Growth_Rate"]
+    if isinstance(growth_val, str):
+        growth_val = float(growth_val.replace("%", "").strip())
 
     return {
         "bs_id": bs_id,
-        "location_name": record["Location_Name"],
-        "roaming_user_pct": round(roaming_pct, 4),
-        "roaming_user_pct_display": f"{roaming_pct * 100:.1f}%",
-        "trigger_sop6_multilingual": roaming_pct >= 0.30,
-        "user_count": int(record["User_Count"]),
+        "location_name": str(latest["Location_Name"]),
         "query_timestamp": pd.Timestamp(ts).strftime(sim_clock.TIME_FMT),
-        "data_as_of": data_as_of(time_slice),
+        "samples": int(len(history)),
+        "peak_user_count": int(peak_row["User_Count"]),
+        "peak_at": pd.Timestamp(peak_row["Timestamp"]).strftime(sim_clock.TIME_FMT),
+        "current_user_count": int(latest["User_Count"]),
+        "current_growth_rate": round(float(growth_val or 0), 4),
+        "data_as_of": pd.Timestamp(latest["Timestamp"]).strftime(sim_clock.TIME_FMT),
     }
+
+
+def station_reading(bs_id: str, timestamp: str | None = None) -> dict | None:
+    """查詢時間當下的單站人流讀值（依 SIM_DATA_MODE 切片），查無資料回傳 None。"""
+    crowd_df = _load_crowd_density()
+    bs_df = crowd_df[crowd_df["BS_ID"] == bs_id]
+    if bs_df.empty:
+        return None
+    time_slice, ts = _get_time_slice(bs_df, timestamp, key_col="BS_ID")
+    if time_slice.empty:
+        return None
+    payload = _station_record(time_slice.iloc[0])
+    payload["query_timestamp"] = pd.Timestamp(ts).strftime(sim_clock.TIME_FMT)
+    return payload

@@ -289,18 +289,30 @@ export default function StreetCam({
         </div>
       )}
 
-      {/* 來源標註 */}
-      {source && (
-        <div className="px-4 py-2 border-t border-[var(--border)]">
-          <a
-            href={source}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-[var(--muted-foreground)] hover:text-[var(--accent-foreground)] transition"
-          >
-            影像來源：{isHls ? (streamSource || "政府公開 CCTV 直播") : "政府公開 CCTV 快照，後端代理串流"}
-            <ExternalLink className="w-2.5 h-2.5" />
-          </a>
+      {/* 來源標註與時空關係說明 */}
+      {activeCamera && (
+        <div className="px-4 py-2 border-t border-[var(--border)] space-y-1">
+          {/*
+            畫面是「現在的真實台北」，資料是「2026-05-20 的模擬情境」。
+            不講清楚的話，評審會直接質疑影像與判定數據不同源。
+          */}
+          <p className="text-xs text-[var(--muted-foreground)] leading-relaxed">
+            此影像為該路段目前的實際街景，用於輔助掌握現地環境；
+            <span className="font-medium">與模擬時間軸的車流數據無關</span>，
+            不參與 SOP 分級判定、替代路徑計算或 ETE 估算。
+          </p>
+          {source && (
+            <a
+              href={source}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-[var(--muted-foreground)] hover:text-[var(--accent-foreground)] transition focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
+            >
+              影像來源：
+              {isHls ? streamSource || "政府公開 CCTV 直播" : "政府公開 CCTV 快照，後端代理串流"}
+              <ExternalLink className="w-2.5 h-2.5" />
+            </a>
+          )}
         </div>
       )}
     </div>

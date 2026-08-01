@@ -1,8 +1,8 @@
 """
 City Commander Agent — FastAPI 後端入口
 
-架構：FastAPI + Strands Agents SDK (Claude 3.5 via Bedrock)
-部署：Docker → AWS App Runner
+架構：FastAPI + Strands Agents SDK (Amazon Bedrock Claude Sonnet)
+部署：單一 Docker 映像 → Amazon ECR → Amazon ECS Fargate → Application Load Balancer
 
 時間模型：
   後端內建離散模擬時鐘 (backend/sim_clock.py)，依真實時間逐格推進資料集。
@@ -12,7 +12,9 @@ City Commander Agent — FastAPI 後端入口
   且覆寫時間可落在共同時間軸之外，此時才會啟用 traffic_math 的插值語意）。
 
 Endpoints:
-  GET  /api/status         → 路網當下狀態 (依模擬時鐘)
+  GET  /api/status         → 路網當下狀態、SOP 第 1 條自動應變、資料型 SOP 主動偵測
+  GET  /api/alert-summary  → 自動彈窗用的 LLM 預警摘要 (門檻判定仍由程式運算)
+  GET  /api/sop            → SOP 條文原文與門檻表
   GET  /api/trend          → 截至當下的飽和度時序
   GET  /api/network        → 路網靜態幾何
   GET  /api/cameras        → 全路段即時影像攝影機對照表
@@ -34,9 +36,10 @@ Endpoints:
   POST /api/incidents/preview/upload → 上傳 live_incidents.json 取得預覽
   POST /api/incidents/inject  → 確認預覽後注入事件並推播給所有儀表板
   GET  /api/incidents/injections → 近期注入紀錄
-  POST /api/what-if        → What-if 情境問答
-  GET  /api/health         → Health check
-  WS   /ws/dashboard       → 時間推進時主動推播當下狀態
+  POST /api/what-if        → What-if 情境問答 (可呼叫 traffic_math 工具、保留對話記憶)
+  POST /api/what-if/reset  → 清除指定 session 的對話記憶
+  GET  /api/health         → Health check (?probe=true 會實際打一次 Bedrock)
+  WS   /ws/dashboard       → 時間推進時主動推播當下狀態 / 注入後推播建議書
 """
 
 from __future__ import annotations
@@ -74,6 +77,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, ValidationError  # noqa: E402
 
 from backend import camera_stream, sim_clock  # noqa: E402
+from backend.agents import policy, sop_rules, traffic_math  # noqa: E402
 from backend.agents.architect import run_commander  # noqa: E402
 from backend.data_source import data_source_status, get_data_path  # noqa: E402
 from backend.incident_response import (  # noqa: E402
@@ -100,7 +104,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MAX_UPLOAD_INCIDENTS = int(os.environ.get("MAX_UPLOAD_INCIDENTS", "3"))
+DATA_DIR = PROJECT_ROOT / "data"
+APP_VERSION = "3.0.0"
+# 評審可能會加事件測試，原本的 3 件硬上限會直接擋掉。事件之間本來就併發處理，
+# 提高上限只影響單次批次的耗時，不影響 60 秒預算下的單事件延遲。
+MAX_UPLOAD_INCIDENTS = int(os.environ.get("MAX_UPLOAD_INCIDENTS", "10"))
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", "1048576"))
 
 # 管理員注入介面的共用權杖。留空 = 不驗證（本機 Demo 預設）；
@@ -140,7 +148,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="City Commander Agent",
     description="城市應變指揮官 AI 交通決策系統",
-    version="2.1.0",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 
@@ -163,6 +171,10 @@ class Incident(BaseModel):
     type: str = ""
     location: str = ""
     affected_segment: str = ""
+    # 人流事件（BS_）用這個欄位指出連帶受影響的車流路段，
+    # live_incidents.json 的人群推擠事件就帶了 affected_road: RD_TPE_001。
+    # 少了這個欄位，交通分級與 ETE 會找不到對應路段（命題所稱的人流↔車流融合）。
+    affected_road: str = ""
     status: str = ""
     severity: str = ""
     description: str = ""
@@ -199,6 +211,10 @@ class WhatIfRequest(BaseModel):
     sim_time: str = ""
 
 
+class WhatIfSessionRequest(BaseModel):
+    session_id: str
+
+
 class ClockSettings(BaseModel):
     mode: str | None = None          # smooth | playback | auto | fixed | latest
     sim_time: str | None = None      # 跳到指定時間
@@ -218,21 +234,122 @@ class ClockAdvance(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _auto_advisory_for(segment: dict, ts_str: str) -> dict:
+    """
+    SOP 第 1 條對「城市應變觸發路段」的自動應變。
+
+    B 級：通報交控中心啟動長綠燈時制，替代道路綠燈 +25%，並調度警力淨空路口。
+    A 級：除上述外，同步觸發第 2 條替代路徑引導。
+
+    ETE 的嚴重度：純壅塞沒有事故通報，SOP 第 7 條的 base_clearance 需要一個嚴重度，
+    這裡依分級對應（A 級視同 Critical、B 級視同 High），並在輸出明確標示這是換算假設，
+    不假裝它來自事件資料。
+    """
+    from backend.agents.traffic_math import (
+        affected_segments_for_ete,
+        build_signal_plan,
+        calculate_ete,
+        calculate_optimal_route,
+    )
+
+    seg_id = segment["segment_id"]
+    level = segment["level"]
+    severity = "Critical" if level == "A" else "High"
+
+    advisory: dict = {
+        "segment_id": seg_id,
+        "road_name": segment["road_name"],
+        "level": level,
+        "level_description": sop_rules.level_description(level),
+        "saturation_score": segment["saturation_score"],
+        "is_trigger_segment": True,
+        "triggered_by": (
+            f"{segment['road_name']} 達 {sop_rules.level_description(level)}"
+            f"（飽和度 {round(segment['saturation_score'] * 100)}%、"
+            f"時速 {segment['avg_speed']} 公里）"
+        ),
+        "sop_reference": (
+            "SOP 第 1 條：觸發路段達 A 級 → 長綠燈時制並同步觸發第 2 條替代路徑引導"
+            if level == "A"
+            else "SOP 第 1 條：觸發路段達 B 級 → 長綠燈時制並調度警力淨空路口"
+        ),
+    }
+
+    route = None
+    if level == "A":
+        # A 級才做替代路徑引導；B 級依 SOP 只做號誌與警力
+        route = calculate_optimal_route(seg_id, ts_str) or {}
+        primary = route.get("primary_route")
+        if isinstance(primary, dict):
+            advisory["primary_route"] = primary.get("name", "")
+            advisory["primary_route_id"] = primary.get("segment_id", "")
+            advisory["primary_saturation"] = primary.get("saturation_score")
+            advisory["selection_reason"] = route.get("selection_reason", "")
+            advisory["selection_tier"] = route.get("selection_tier")
+            advisory["secondary_routes"] = [
+                {"name": c["name"], "saturation_score": c["saturation_score"]}
+                for c in route.get("secondary_routes", [])
+            ]
+            advisory["excluded_routes"] = [
+                {"name": c["name"], "reason": c["reason"]}
+                for c in route.get("excluded_routes", [])
+            ]
+            advisory["upstream_resolution"] = route.get("upstream_resolution", {})
+            # 完整候選評估表：每條替代道路的容量、相交、上下游與選用/排除理由，
+            # 對應交付要求「說明排除其他候選之理由」
+            advisory["route_candidates"] = route.get("all_candidates", [])
+
+    # ETE：受影響路段的定義與事件建議書共用同一個函式，兩邊不會算出不同數字
+    affected_ids = affected_segments_for_ete(seg_id, route)
+    ete_data = calculate_ete(severity, affected_ids, ts_str)
+    if ete_data and "ete_minutes" in ete_data:
+        advisory["ete_minutes"] = ete_data["ete_minutes"]
+        advisory["ete_breakdown"] = {
+            "severity": ete_data["severity"],
+            "severity_basis": (
+                f"無事故通報，依 SOP 第 1 條分級換算嚴重度："
+                f"{level} 級視同 {severity}"
+            ),
+            "base_clearance_minutes": ete_data["base_clearance_minutes"],
+            "congestion_penalty_minutes": ete_data["congestion_penalty_minutes"],
+            "avg_saturation_score": ete_data["avg_saturation_score"],
+            "affected_segment_ids": ete_data["affected_segment_ids"],
+            "formula": ete_data["formula"],
+        }
+
+    plan = build_signal_plan(
+        seg_id,
+        ts_str,
+        advisory.get("ete_minutes"),
+        advisory.get("primary_route_id", ""),
+        scope=traffic_math.SIGNAL_SCOPE_SOP1,
+    )
+    if plan and "error" not in plan:
+        advisory["signal_plan"] = plan
+        advisory["signal_action"] = "、".join(
+            f"{a['road_name']} {a['action']}" for a in plan.get("adjustments", [])
+        )
+        advisory["police_dispatch"] = plan.get("police_dispatch")
+        advisory["window"] = plan.get("window", "")
+
+    return advisory
+
+
 def _build_status(ts: str | None = None) -> dict:
     """
     組裝路網當下狀態。
 
     ts 為空時使用模擬時鐘的當下時間。每個路段取「<= 當下時間」的最新一筆，
     因此資料集裡未來的時間點不會外洩給前端。
+
+    自動應變只針對 SOP 第 1 條明列的城市應變觸發路段（忠孝東路四段、光復南路）；
+    其餘路段達 A/B 級只做紅黃燈顯示，列在 monitored_alerts，不啟動長綠燈時制與
+    替代路徑引導。這是原本會對全部 A 級路段發應變的過度觸發修正。
     """
     import pandas as pd
 
-    from backend.agents.traffic_math import (
-        _get_time_slice,
-        _load_traffic_flow,
-        calculate_ete,
-        calculate_optimal_route,
-    )
+    from backend.agents.policy import evaluate_data_triggers
+    from backend.agents.traffic_math import _get_time_slice, _load_traffic_flow, crowd_snapshot
 
     with sim_clock.override(ts) as forced:
         current = sim_clock.now()
@@ -243,7 +360,7 @@ def _build_status(ts: str | None = None) -> dict:
         segments = []
         for _, row in latest.iterrows():
             score = round(float(row["Saturation_Score"]), 4)
-            level = "A" if score >= 0.95 else ("B" if score >= 0.85 else "Normal")
+            level = sop_rules.assess_congestion_level(score)
             weight = float(row.get("Interp_Weight", 0.0) or 0.0)
             segments.append({
                 "segment_id": row["Segment_ID"],
@@ -253,6 +370,8 @@ def _build_status(ts: str | None = None) -> dict:
                 "vehicle_count": int(round(float(row["Vehicle_Count"]))),
                 "lane_status": row["Lane_Status"],
                 "level": level,
+                "level_description": sop_rules.level_description(level),
+                "is_trigger_segment": sop_rules.is_trigger_segment(row["Segment_ID"]),
                 # 該路段這筆量測的實際時間 (可能早於當下時間)
                 "data_as_of": pd.Timestamp(row["Timestamp"]).strftime(sim_clock.TIME_FMT),
                 # 數值是否為插值結果，以及插到前後兩筆之間的哪個位置
@@ -261,115 +380,100 @@ def _build_status(ts: str | None = None) -> dict:
             })
         segments.sort(key=lambda s: s["segment_id"])
 
-        # SOP 第 1 條 → A 級自動觸發第 2 條替代路徑
+        abnormal = [s for s in segments if s["level"] in {"A", "B"}]
+
+        # SOP 第 1 條：只有城市應變觸發路段會啟動應變
         auto_advisories = []
-        for seg in [s for s in segments if s["level"] == "A"]:
-            seg_id = seg["segment_id"]
+        for seg in [s for s in abnormal if s["is_trigger_segment"]]:
             try:
-                route = calculate_optimal_route(seg_id, ts_str)
-                primary = (route or {}).get("primary_route")
-                ete_data = calculate_ete("Critical", [seg_id], ts_str)
-
-                advisory = {
-                    "triggered_by": f"{seg['road_name']} 達 A 級癱瘓（飽和度 {round(seg['saturation_score'] * 100)}%）",
-                    "sop_reference": "SOP 第 1 條 → 同步觸發第 2 條替代路徑引導",
-                    "segment_id": seg_id,
-                    "road_name": seg["road_name"],
-                }
-
-                if primary and isinstance(primary, dict):
-                    advisory["primary_route"] = primary.get("name", "")
-                    advisory["primary_saturation"] = primary.get("saturation_score", 0)
-                    advisory["selection_reason"] = (route or {}).get("selection_reason", "")
-                    advisory["signal_action"] = f"{primary.get('name', '')} 綠燈配時 +25%"
-
-                if ete_data and "ete_minutes" in ete_data:
-                    advisory["ete_minutes"] = ete_data["ete_minutes"]
-
-                auto_advisories.append(advisory)
+                auto_advisories.append(_auto_advisory_for(seg, ts_str))
             except Exception as e:
-                logger.warning(f"自動路徑建議失敗 ({seg_id}): {type(e).__name__}: {e}")
+                logger.warning(
+                    f"自動應變建議失敗 ({seg['segment_id']}): {type(e).__name__}: {e}"
+                )
+        # A 級優先呈現
+        auto_advisories.sort(key=lambda a: (a["level"] != "A", -a["saturation_score"]))
+
+        monitored_alerts = [
+            {
+                "segment_id": s["segment_id"],
+                "road_name": s["road_name"],
+                "level": s["level"],
+                "level_description": s["level_description"],
+                "saturation_score": s["saturation_score"],
+                "avg_speed": s["avg_speed"],
+                "note": "非 SOP 第 1 條城市應變觸發路段，僅供燈號顯示與監控",
+            }
+            for s in abnormal
+            if not s["is_trigger_segment"]
+        ]
 
         data_as_of = max((s["data_as_of"] for s in segments), default=None)
 
-        # --- 人流密度觀測站 (signaling_crowd_density.csv) — 帶插值 ---
+        # --- 人流密度觀測站 ---
+        # 改走 traffic_math 的切片邏輯，與 SOP 第 3、4、6 條判定同源。
+        # 原本這裡自己重寫一套線性插值且不看 SIM_DATA_MODE，導致生產環境
+        # 路段是 as-of、站點卻是插值，畫面數字和後端判定會不一致。
         stations = []
-        crowd_csv = get_data_path("signaling_crowd_density.csv")
-        if crowd_csv.exists():
-            try:
-                crowd_df = pd.read_csv(crowd_csv, parse_dates=["Timestamp"])
-                # 解析 Roaming_User_Pct 欄位（去掉 % 符號）
-                crowd_df["_roaming_num"] = (
-                    crowd_df["Roaming_User_Pct"]
-                    .astype(str).str.replace("%", "", regex=False)
-                    .astype(float)
-                )
+        try:
+            snapshot = crowd_snapshot(ts_str)
+            for station in snapshot["stations"]:
+                stations.append({
+                    "bs_id": station["bs_id"],
+                    "location_name": station["location_name"],
+                    "user_count": station["user_count"],
+                    "stay_time_avg": station["stay_time_avg"],
+                    "growth_rate": station["growth_rate"],
+                    # 統一為 0~1；顯示字串另給，避免前後端各用一套單位
+                    "roaming_user_pct": station["roaming_user_pct"],
+                    "roaming_user_pct_display": station["roaming_user_pct_display"],
+                    "exceeds_sop6_threshold": station["exceeds_sop6_threshold"],
+                    "data_as_of": station["data_as_of"],
+                })
+        except Exception as e:
+            logger.warning(f"人流密度資料讀取失敗: {type(e).__name__}: {e}")
 
-                for bs_id, group in crowd_df.groupby("BS_ID"):
-                    group = group.sort_values("Timestamp")
-                    past = group[group["Timestamp"] <= current]
-                    future = group[group["Timestamp"] > current]
-
-                    if past.empty:
-                        # 時鐘早於資料集起點，用第一筆
-                        row = group.iloc[0]
-                        weight = 0.0
-                    elif future.empty:
-                        # 時鐘已超過資料集末尾，用最後一筆
-                        row = past.iloc[-1]
-                        weight = 0.0
-                    else:
-                        # 在兩筆之間做線性插值
-                        prev_row = past.iloc[-1]
-                        next_row = future.iloc[0]
-                        t0 = prev_row["Timestamp"]
-                        t1 = next_row["Timestamp"]
-                        span = (t1 - t0).total_seconds()
-                        elapsed = (current - t0).total_seconds()
-                        weight = elapsed / span if span > 0 else 0.0
-
-                        # 插值數值欄位
-                        user_count = int(prev_row["User_Count"] + weight * (next_row["User_Count"] - prev_row["User_Count"]))
-                        stay_time = int(prev_row["Stay_Time_Avg"] + weight * (next_row["Stay_Time_Avg"] - prev_row["Stay_Time_Avg"]))
-                        growth_rate = round(prev_row["Growth_Rate"] + weight * (next_row["Growth_Rate"] - prev_row["Growth_Rate"]), 3)
-                        roaming_pct = round(prev_row["_roaming_num"] + weight * (next_row["_roaming_num"] - prev_row["_roaming_num"]), 1)
-
-                        stations.append({
-                            "bs_id": bs_id,
-                            "location_name": prev_row["Location_Name"],
-                            "user_count": user_count,
-                            "stay_time_avg": stay_time,
-                            "growth_rate": growth_rate,
-                            "roaming_user_pct": roaming_pct,
-                            "data_as_of": current.strftime(sim_clock.TIME_FMT),
-                        })
-                        continue
-
-                    # 非插值情況（首筆或末筆）
-                    stations.append({
-                        "bs_id": bs_id,
-                        "location_name": row["Location_Name"],
-                        "user_count": int(row["User_Count"]),
-                        "stay_time_avg": int(row["Stay_Time_Avg"]),
-                        "growth_rate": round(float(row["Growth_Rate"]), 2),
-                        "roaming_user_pct": float(row["_roaming_num"]),
-                        "data_as_of": pd.Timestamp(row["Timestamp"]).strftime(sim_clock.TIME_FMT),
-                    })
-
-                stations.sort(key=lambda s: s["bs_id"])
-            except Exception as e:
-                logger.warning(f"人流密度資料讀取失敗: {type(e).__name__}: {e}")
+        # --- 資料型 SOP 主動偵測（第 3、4、6 條） ---
+        try:
+            triggers = evaluate_data_triggers(ts_str)
+            data_triggers = {
+                "query_timestamp": triggers["query_timestamp"],
+                "data_as_of": triggers["data_as_of"],
+                "triggered_numbers": triggers["triggered_numbers"],
+                "multilingual_required": triggers["multilingual_required"],
+                "languages": triggers["languages"],
+                "checks": [
+                    {
+                        "sop_number": c["sop_number"],
+                        "sop_title": c["sop_title"],
+                        "triggered": c["triggered"],
+                        "reason": c["reason"],
+                        "evidence": c.get("evidence", {}),
+                        "actions": c.get("actions", []),
+                    }
+                    for c in triggers["checks"]
+                ],
+                "roaming_trigger_stations": triggers["roaming_scan"]["trigger_stations"],
+            }
+        except Exception as e:
+            logger.warning(f"資料型 SOP 判定失敗: {type(e).__name__}: {e}")
+            data_triggers = {"triggered_numbers": [], "checks": []}
 
         return {
             "timestamp": ts_str,          # 當下模擬時間 (前端主要顯示這個)
             "sim_time": ts_str,
             "data_as_of": data_as_of,     # 資料實際最新量測時間
+            "data_mode": os.environ.get("SIM_DATA_MODE", "interpolate"),
             "is_time_override": forced is not None,
             "clock": sim_clock.state(),
+            "thresholds": sop_rules.thresholds_payload(),
             "total_segments": len(segments),
             "segments": segments,
             "stations": stations,
             "auto_advisories": auto_advisories,
+            "monitored_alerts": monitored_alerts,
+            "data_triggers": data_triggers,
+            "has_alert": bool(abnormal or data_triggers.get("triggered_numbers")),
         }
 
 
@@ -416,16 +520,75 @@ async def _broadcast_loop() -> None:
 
 
 @app.get("/api/health")
-async def health():
-    return {
+async def health(
+    probe: bool = Query(
+        False,
+        description="true 時實際呼叫一次 Bedrock 驗證模型可用（會產生少量費用與延遲）",
+    ),
+):
+    """
+    容器與 ALB 健康檢查。
+
+    ALB 走預設路徑（不做 Bedrock 探測）以免每次健康檢查都呼叫模型。
+    Demo 前請手動打一次 `?probe=true`：模型 ID 或 IAM 只要有一點不對，
+    所有 LLM 功能會靜默退回確定性 fallback，畫面看起來正常但其實沒接上 AI。
+    """
+    from backend.agents.architect import bedrock_settings, probe_bedrock
+
+    payload = {
         "status": "ok",
         "service": "city-commander-agent",
-        "version": "2.1.0",
+        "version": APP_VERSION,
         "timestamp": datetime.now().strftime(sim_clock.TIME_FMT),
         "sim_time": sim_clock.now_str(),
         "clock_mode": sim_clock.state()["mode"],
+        "data_mode": os.environ.get("SIM_DATA_MODE", "interpolate"),
         "data_source": data_source_status(),
+        "bedrock": bedrock_settings(),
     }
+    if probe:
+        payload["bedrock_probe"] = await asyncio.to_thread(probe_bedrock)
+    return payload
+
+
+@app.get("/api/sop")
+async def sop_clauses(section: str | None = Query(None, description="條號或關鍵字，留空取全部")):
+    """
+    SOP 條文原文。前端用來在建議書與對話回覆旁顯示引用依據，
+    讓判定結果可以直接對照條文本身。
+    """
+    if section:
+        return policy.read_traffic_sop(section)
+    data = policy.read_traffic_sop()
+    clauses = policy.parse_clauses(data.get("sop_text", ""))
+    return {
+        "source": data.get("source", "local"),
+        "total": len(clauses),
+        "thresholds": sop_rules.thresholds_payload(),
+        "clauses": [clauses[number] for number in sorted(clauses)],
+    }
+
+
+@app.get("/api/alert-summary")
+async def alert_summary(
+    ts: str | None = Query(None, description="單次時間覆寫，格式 YYYY-MM-DD HH:MM"),
+):
+    """
+    儀表板自動彈窗用的預警摘要。
+
+    命題要求「門檻判定由程式運算、摘要由 LLM 生成」：門檻與 SOP 觸發在
+    _build_status / policy 算完後才交給 LLM 寫成摘要，LLM 不參與判定。
+    結果依「時間 + 異常特徵」快取，時間沒推進不會重複呼叫 Bedrock。
+    """
+    from backend.agents.architect import generate_alert_summary
+
+    def build() -> dict:
+        status = _build_status(ts)
+        return generate_alert_summary(
+            status, status.get("data_triggers"), status.get("sim_time")
+        )
+
+    return await asyncio.to_thread(build)
 
 
 # --- 模擬時鐘 ---------------------------------------------------------------
@@ -1169,7 +1332,12 @@ async def list_incident_injections(
 
 @app.post("/api/what-if")
 async def handle_what_if(request: WhatIfRequest):
-    """What-if 情境問答；LLM 只看得到當下模擬時間為止的路網數據。"""
+    """
+    What-if 情境問答；LLM 只看得到當下模擬時間為止的路網與人流數據。
+
+    顧問可呼叫 traffic_math / policy 工具取得確定性計算結果，因此回覆的替代路徑、
+    ETE 與 SOP 觸發狀態與建議書同源。回應會附上實際引用到的條文原文與呼叫的工具。
+    """
     from backend.agents.architect import run_what_if
 
     session_id = request.session_id or f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -1177,6 +1345,15 @@ async def handle_what_if(request: WhatIfRequest):
         run_what_if, request.prompt, session_id, request.sim_time or None,
     )
     return JSONResponse(content=result)
+
+
+@app.post("/api/what-if/reset")
+async def reset_what_if(request: WhatIfSessionRequest):
+    """清除對話記憶。指揮官想從乾淨的情境重新問時使用。"""
+    from backend.agents.architect import reset_chat_session
+
+    reset_chat_session(request.session_id)
+    return {"status": "reset", "session_id": request.session_id}
 
 
 # ---------------------------------------------------------------------------

@@ -34,18 +34,31 @@ ECS Fargate
 
 ## 功能模組
 
-1. **動態路網監測**：依模擬時鐘呈現 15 個路段的飽和度、速度、車流與 A/B 級異常警報。
-2. **突發事件應變**：注入或上傳事件後，產出「交控中心建議書」JSON。
-3. **AI 策略對話**：依本地 SOP 與完整路網資料提供 What-if 決策支援。
-4. **替代路徑與 ETE**：由專用交通數學模組執行路徑篩選與恢復時間估算。
-5. **多語公眾通報**：漫遊率達 30% 觸發 SOP 第 6 條，產生繁中、英、日、韓公告。
+1. **動態路網監測**：依模擬時鐘呈現路段飽和度、速度、車流與 A/B 級分級；儀表板另有
+   時間軸控制列可暫停、回放與跳至指定時間點。
+2. **主動預警**：達 SOP 門檻時自動彈出預警。門檻判定由程式運算，摘要由 LLM 生成
+   （`GET /api/alert-summary`）。人流與信令的 SOP 第 3、4、6 條**不需要事件注入**即會主動偵測。
+3. **突發事件應變**：三段式注入（目錄 → 預覽 → 確認），產出「交控中心建議書」並回報端到端耗時。
+4. **AI 策略對話**：What-if 顧問可呼叫路網計算工具取得確定性結果，保留對話記憶，
+   並附上實際引用的 SOP 條文原文。
+5. **替代路徑與 ETE**：由 `traffic_math` 執行路徑篩選與恢復時間估算，輸出每個候選替代道路
+   被選用或排除的理由。
+6. **多語公眾通報**：全市任一基地台漫遊率達 30% 觸發 SOP 第 6 條，產生繁中、英、日、韓的
+   CMS 看板文字與民眾簡訊。
 
-### 事件處置 v1（開發中）
+### SOP 條款實作對照
 
-`backend/incident_response/` 為模組二重構後的領域層，包含嚴格契約模型、共用 payload
-parser、來源驗證與 strict as-of 快照。目前僅為程式庫，尚未接上 API；以
-`INCIDENT_V1_ENABLED` feature flag 控管，預設關閉，不影響現有端點。
-規格與實作進度見 `.kiro/specs/incident-injection-response/`。
+| 條款 | 觸發來源 | 實作位置 |
+|---|---|---|
+| 1 交通擁塞級別 | 車流飽和度 | `sop_rules.assess_congestion_level`；應變限於觸發路段 `RD_TPE_001`、`RD_TPE_002` |
+| 2 車禍與路障 | 事件 | `policy.check_sop2_trigger` + `traffic_math.calculate_optimal_route` |
+| 3 捷運與接駁分流 | **資料** | `policy.check_sop3_trigger`（儀表板主動偵測） |
+| 4 大巨蛋散場 | **資料**（歷史峰值） | `policy.check_sop4_trigger` + `traffic_math.station_history` |
+| 5 號誌故障 | 事件 | `policy.check_sop5_trigger` |
+| 6 數位通報多語化 | **資料**（全市掃描） | `policy.check_sop6_trigger` + `traffic_math.scan_roaming` |
+| 7 預計恢復時間 | 事件／分級 | `traffic_math.calculate_ete`，受影響路段定義由 `affected_segments_for_ete` 統一 |
+
+架構圖、職責邊界、資料流與 Demo 前檢查清單見 [`docs/architecture.md`](docs/architecture.md)。
 
 ## 資料來源分工
 
@@ -85,15 +98,21 @@ Dashboard 的「事件注入」頁提供管理員注入 `live_incidents.json`（
 ### 60 秒預算
 
 競賽要求 60 秒內產出結果。事件之間併發處理，Bedrock 呼叫由 token bucket 依
-`BEDROCK_MIN_CALL_INTERVAL` 間隔送出，以符合基礎模型約每秒一次的呼叫限制；
-`BEDROCK_MAX_TOKENS` 同時限制輸出長度以壓低延遲。實測 3 筆事件約 27 秒完成。
+`BEDROCK_MIN_CALL_INTERVAL` 間隔送出，以符合基礎模型約每秒一次的呼叫限制。
+每個事件只呼叫一次 Bedrock（同時產出建議書敘述與現場處置條列），3 筆事件共 3 次呼叫。
+
+回應帶有 `elapsed_ms` / `elapsed_seconds` / `within_budget`，儀表板會把端到端耗時
+顯示在建議書標頭，現場可直接驗證。實測 3 筆官方事件約 18 秒完成（Claude Sonnet 4.6，
+`BEDROCK_MAX_TOKENS=1500`）。
 
 ## 主要端點
 
 | 方法 | 路徑 | 用途 |
 |---|---|---|
-| GET | `/api/health` | 容器與 ALB 健康檢查 |
-| GET | `/api/status` | 依模擬時鐘的路網當下狀態與自動建議 |
+| GET | `/api/health` | 容器與 ALB 健康檢查；`?probe=true` 會實際呼叫一次 Bedrock 驗證模型可用 |
+| GET | `/api/status` | 路網當下狀態、SOP 第 1 條自動應變、僅監控路段、資料型 SOP 觸發、門檻表 |
+| GET | `/api/alert-summary` | 自動彈窗用的 LLM 預警摘要（門檻判定仍由程式運算） |
+| GET | `/api/sop` | SOP 條文原文與門檻表 |
 | GET | `/api/trend` | 路網時序趨勢（預設不外洩未來資料） |
 | GET | `/api/network` | 路網靜態幾何（容量、路口、替代道路） |
 | GET | `/api/timeline` | 共同時間軸所有時間點與目前索引 |
@@ -110,16 +129,36 @@ Dashboard 的「事件注入」頁提供管理員注入 `live_incidents.json`（
 | POST | `/api/incidents/preview/upload` | 上傳 `live_incidents.json` 取得同一份預覽 |
 | POST | `/api/incidents/inject` | 確認預覽後注入事件並推播給所有儀表板 |
 | GET | `/api/incidents/injections` | 近期注入紀錄（可含建議書） |
-| POST | `/api/what-if` | Bedrock 情境問答 |
+| POST | `/api/what-if` | 情境問答；可呼叫 `traffic_math` 工具、保留對話記憶、回傳引用條文 |
+| POST | `/api/what-if/reset` | 清除指定 session 的對話記憶 |
 | WS | `/ws/dashboard` | 模擬時間推進時推播狀態；事件注入完成時推播建議書 |
+
+前端優先走 `/ws/dashboard` 接收推播，連不上或斷線時自動退回 REST 輪詢
+（`frontend/src/lib/useLiveStatus.js`），儀表板會顯示目前使用哪一種傳輸。
 
 所有端點都支援 `?ts=YYYY-MM-DD HH:MM` 單次時間覆寫，不影響全域時鐘。FastAPI 互動文件位於 `/docs`。
 
 ### 模擬時間模型
 
-模擬時鐘為離散式：只會落在 `city_traffic_flow.csv` 與 `signaling_crowd_density.csv`
-**同時**具有完整切片的共同時間軸上（目前為 14 格，17:00 至 23:15）。播放時每一個實際秒
-前進一格，不做插值，也不會提前使用未來資料。
+模擬時鐘為離散式，只會落在共同時間軸上（目前 14 格，17:00 至 23:15）。共同時間軸的定義是
+`city_traffic_flow.csv` 與 `signaling_crowd_density.csv` **兩份來源都有該時間點、且該時間點
+的每一列欄位完整、識別碼不重複、數值可解析**。
+
+注意這裡的「完整」是指**欄位完整**，不代表 15 個路段都到齊：資料集本身是稀疏的，
+例如 17:00 只有 5 個路段、21:30 有 9 個路段，22:00 之後才是完整 15 段。
+未出現的路段在該時間點沒有量測，畫面上就不會出現該路段的卡片。
+
+`SIM_DATA_MODE` 決定讀值語意：
+
+| 模式 | 行為 | 是否觸碰查詢時間之後的資料 |
+|---|---|---|
+| `asof` | 取 <= 查詢時間的最新一筆，數值呈階梯狀 | 否 |
+| `exact` | 只取單一時間點切片 | 否 |
+| `interpolate` | 在前後兩筆量測之間線性插值 | **是**（會參考下一筆量測） |
+
+正式部署（`scripts/deploy-ecs-fargate.sh`）固定使用 `asof`，確保絕不使用未來資料。
+本機預設為 `interpolate` 以取得平滑曲線；此模式下 `/api/status` 每個路段會帶
+`is_interpolated` 與 `interp_weight`，可判斷該數值是量測值還是插值結果。
 
 ## 本機開發
 
@@ -212,16 +251,22 @@ city-commander-agent/
 │   ├── main.py                  # FastAPI、API、WebSocket、前端靜態服務
 │   ├── sim_clock.py             # 離散模擬時鐘與共同時間軸
 │   ├── agents/
-│   │   ├── architect.py         # 總指揮與 What-if
-│   │   ├── policy.py            # SOP 驗證
-│   │   ├── router.py            # 路由 Agent
-│   │   ├── comms.py             # 多語通報 Agent
-│   │   └── traffic_math.py      # 唯一數值計算模組
-│   ├── incident_response/       # 事件處置 v1 領域層（feature flag 控管）
+│   │   ├── sop_rules.py         # SOP 門檻常數、事件分類、上下游判定（規則單一來源）
+│   │   ├── traffic_math.py      # 唯一數值計算模組（分級、路徑、ETE、漫遊、號誌）
+│   │   ├── policy.py            # SOP 1~7 觸發判定與條文原文擷取
+│   │   ├── router.py            # 路徑與 ETE 組裝
+│   │   ├── comms.py             # 四語 CMS 與民眾簡訊
+│   │   ├── advisor_tools.py     # What-if 顧問可呼叫的計算工具
+│   │   └── architect.py         # 總指揮、預警摘要、What-if
+│   ├── incident_response/       # 事件注入契約層（驗證、預覽、注入紀錄）
 │   └── Dockerfile               # React + FastAPI 正式單一映像
 ├── frontend/                    # React Dashboard
 ├── data/                        # SOP、路網、流量與人流資料
-├── tests/                       # pytest：契約、parser、時鐘、快照、教案
+├── docs/
+│   └── architecture.md          # AWS 架構圖、職責邊界、資料流、Demo 檢查清單
+├── tests/
+│   ├── backend/agents/          # SOP 1~7 逐條黃金案例
+│   └── backend/incident_response/  # 契約、parser、時鐘、快照
 ├── deployment/iam/              # 受管服務信任與 Bedrock IAM policy
 ├── scripts/
 │   └── deploy-ecs-fargate.sh    # 正式 AWS 部署腳本

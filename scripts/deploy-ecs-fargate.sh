@@ -14,8 +14,16 @@ ALB_NAME="${ALB_NAME:-city-commander-alb}"
 TARGET_GROUP_NAME="${TARGET_GROUP_NAME:-city-commander-tg}"
 TASK_FAMILY="${TASK_FAMILY:-city-commander-agent}"
 LOG_GROUP_NAME="${LOG_GROUP_NAME:-/ecs/city-commander-agent}"
-MAX_UPLOAD_INCIDENTS="${MAX_UPLOAD_INCIDENTS:-3}"
+MAX_UPLOAD_INCIDENTS="${MAX_UPLOAD_INCIDENTS:-10}"
 S3_DATA_PREFIX="${S3_DATA_PREFIX:-data}"
+BEDROCK_MAX_TOKENS="${BEDROCK_MAX_TOKENS:-1500}"
+
+# 模擬時鐘：共同時間軸只有 14 格，用預設的 1 秒/格會在容器啟動 14 秒後就播完，
+# 之後永久停在 23:15 的結尾狀態。評審打開網址時幾乎一定看到已經結束的畫面，
+# 所以正式部署放慢節奏並開啟循環，讓情境持續重播。
+# 儀表板另有時間軸控制列，可隨時暫停、回放或跳到指定時間點。
+SIM_CLOCK_INTERVAL="${SIM_CLOCK_INTERVAL:-5}"
+SIM_CLOCK_LOOP="${SIM_CLOCK_LOOP:-true}"
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || { echo "Required command not found: $1" >&2; exit 1; }
@@ -227,7 +235,11 @@ cat >"$TEMP_DIR/task-definition.json" <<JSON
       {"name": "S3_DATA_BUCKET", "value": "$S3_DATA_BUCKET"},
       {"name": "S3_DATA_PREFIX", "value": "$S3_DATA_PREFIX"},
       {"name": "BEDROCK_MODEL_ID", "value": "$MODEL_ID"},
+      {"name": "BEDROCK_MAX_TOKENS", "value": "$BEDROCK_MAX_TOKENS"},
       {"name": "SIM_DATA_MODE", "value": "asof"},
+      {"name": "SIM_CLOCK_MODE", "value": "playback"},
+      {"name": "SIM_CLOCK_INTERVAL", "value": "$SIM_CLOCK_INTERVAL"},
+      {"name": "SIM_CLOCK_LOOP", "value": "$SIM_CLOCK_LOOP"},
       {"name": "MAX_UPLOAD_INCIDENTS", "value": "$MAX_UPLOAD_INCIDENTS"},
       {"name": "PORT", "value": "8080"}
     ],

@@ -5,11 +5,17 @@
 打造具備「主動感知、極速決策、跨域協調」的 AI 交通指揮中心。
 
 1. **即時事件偵測與分級** — 自動判定交通癱瘓等級（A / B 級）
-2. **法規 SOP 比對與觸發** — 自動識別應觸發之 SOP 條款（第 2、3、5、6 條）
-3. **替代路徑計算與 ETE 估算** — 篩選主疏散路段並計算預估恢復時間
-4. **多語系公眾通報** — 繁中/英/日/韓四語公告訊息
+2. **法規 SOP 比對與觸發** — 自動識別應觸發之 SOP 條款（第 1～7 條全部）
+   - 事件型：第 2、5 條
+   - 資料型（不需事件注入，儀表板主動偵測）：第 3、4、6 條
+3. **替代路徑計算與 ETE 估算** — 篩選主疏散路段、輸出排除理由並計算預估恢復時間
+4. **多語系公眾通報** — 繁中/英/日/韓四語 CMS 看板文字與民眾簡訊
+5. **主動預警** — 達門檻自動彈窗，門檻判定由程式運算、摘要由 LLM 生成
+6. **What-if 顧問** — 可呼叫計算工具、保留對話記憶、附上引用條文原文
 
 最終產出：「交控中心建議書」JSON，透過 Dashboard 即時呈現。
+
+架構圖與職責邊界見 `docs/architecture.md`。
 
 ---
 
@@ -25,17 +31,23 @@ Application Load Balancer
 Amazon ECS Fargate
   └── 單一正式 Docker 映像
       ├── FastAPI + Python 3.13
-      │   ├── POST /api/incidents        → Architect Agent
-      │   ├── POST /api/incidents/upload → 事件檔案上傳
-      │   ├── POST /api/what-if          → What-if 問答
-      │   ├── GET  /api/status           → 路網即時狀態
+      │   ├── GET  /api/status           → 路網狀態、自動應變、資料型 SOP、門檻表
+      │   ├── GET  /api/alert-summary    → LLM 預警摘要（門檻仍由程式判定）
+      │   ├── GET  /api/sop              → SOP 條文原文
       │   ├── GET  /api/trend            → 路網趨勢
-      │   └── WS   /ws/dashboard         → 即時推播
+      │   ├── GET/POST /api/clock*       → 模擬時鐘（前端時間軸控制列）
+      │   ├── POST /api/incidents        → Architect Agent
+      │   ├── POST /api/incidents/preview|inject → 三段式事件注入（契約層驗證）
+      │   ├── POST /api/what-if          → What-if 問答（工具呼叫 + 對話記憶）
+      │   └── WS   /ws/dashboard         → 狀態推播 + 注入後建議書廣播
       ├── React Dashboard 編譯產物
       └── Strands Agents SDK
-          ├── Policy Agent（SOP 判定，本地 SOP 讀取）
-          ├── Router Agent（路徑 + ETE，traffic_math 模組）
-          ├── Comms Agent（多語通報，漫遊率查詢）
+          ├── sop_rules（門檻／分類／上下游，無 I/O）
+          ├── traffic_math（唯一數值計算）
+          ├── Policy Agent（SOP 1~7 判定，條文原文擷取）
+          ├── Router Agent（路徑 + ETE + 號誌配時）
+          ├── Comms Agent（四語 CMS 與民眾簡訊）
+          ├── advisor_tools（What-if 顧問的 9 個計算工具）
           └── Amazon Bedrock Claude Sonnet 4.6
 
 映像流程：Docker Buildx → Amazon ECR → ECS Fargate
@@ -68,8 +80,14 @@ Amazon ECS Fargate
 
 ### 約束 1：嚴禁數學幻覺
 
-所有數值計算（飽和度比對、ETE、路徑篩選）只在 `backend/agents/traffic_math.py` 執行。
-Agent 僅負責組裝參數與解讀回傳值。
+所有數值計算（飽和度比對、ETE、路徑篩選、漫遊掃描、號誌配時）只在
+`backend/agents/traffic_math.py` 執行。Agent 僅負責組裝參數與解讀回傳值。
+
+### 約束 1b：規則常數單一來源
+
+SOP 的門檻、觸發路段、事件分類與上下游判定只在 `backend/agents/sop_rules.py` 定義。
+`policy.py`、`main.py` 與前端都不得自行寫死 0.85 / 0.95 / 30% 等數值；
+前端由 `GET /api/status` 的 `thresholds` 取得。
 
 ### 約束 2：時間格式統一
 
@@ -82,21 +100,54 @@ Agent 僅負責組裝參數與解讀回傳值。
 
 ### 約束 4：多語系觸發
 
-漫遊率 >= 30% → SOP 第 6 條 → 繁中/英/日/韓四語。
+SOP 第 6 條原文為「**任一**基地台 Roaming_User_Pct >= 30%」。判定範圍是**全資料集所有基地台**，
+不是事故路段的 `nearby_stations`。唯一判定入口是 `traffic_math.scan_roaming()`。
+觸發 → 繁中/英/日/韓四語；未觸發 → 僅繁中。
+漫遊率一律以 0~1 表示，顯示字串另外提供，禁止 0~100 與 0~1 兩套單位並存。
 
 ### 約束 5：路段篩選邏輯
 
 1. `capacity_vph` >= 1000
-2. 位於事故點 intersections 上游
-3. 當前 Saturation_Score 最低者
+2. 與事故路段直接相交（名稱出現在其 `intersections`）
+3. 相交路口位於事故點上游 — 由 `sop_rules.resolve_upstream()` 依事故位置描述與
+   `flow_direction` 判定；無法定位時退回「陣列前半」啟發式並在報告標明判定方法
+4. 通過篩選者取 Saturation_Score 最低者為主疏散；位於下游之相交幹道僅列次要疏散
 
-### 約束 6：ETE 公式
+主疏散不得同時出現在次要疏散清單。每個 alternative 都必須出現在候選表並附上
+選用或排除理由（對應交付要求「說明排除其他候選之理由」）。
+
+### 約束 5b：SOP 第 1 條應變僅限觸發路段
+
+「城市應變觸發路段」只有 `RD_TPE_001`（忠孝東路四段）與 `RD_TPE_002`（光復南路）。
+其餘 13 段的分級僅用於 Dashboard 紅黃燈顯示，不得啟動長綠燈時制或替代路徑引導，
+應列入 `monitored_alerts`。
+
+觸發路段達 B 級：替代道路（`alternatives` 全集）綠燈 +25% ＋ 調度警力淨空路口。
+達 A 級：另加第 2 條替代路徑引導。
+
+### 約束 6：ETE 公式與受影響路段定義
 
 ```text
 ETE_minutes = base_clearance + congestion_penalty
   Critical → 60, High → 40, Medium → 20
   congestion_penalty = max(0, (avg_saturation - 0.5) × 60)
 ```
+
+「受影響路段」的定義只有一處：`traffic_math.affected_segments_for_ete()`
+= 事故路段 + 主疏散路段 + 次要疏散路段。儀表板自動應變與事件建議書必須共用它，
+同一路段不得算出兩個 ETE。
+
+查無車流量測時**不得**代入預設飽和度：壅塞懲罰以 0 計，並在
+`saturation_data_available` 與 `note` 明確標示。
+
+儀表板對純壅塞（無事故通報）的自動應變需要一個嚴重度，依分級換算
+（A 級視同 Critical、B 級視同 High），並在 `severity_basis` 標明這是換算假設。
+
+### 約束 6b：人流 ↔ 車流融合
+
+`live_incidents.json` 的人流事件（`BS_` 開頭）可帶 `affected_road` 指出連帶受影響的
+車流路段。`sop_rules.classify_incident()` 會據此解析 `traffic_segment`，交通分級與 ETE
+都用該路段計算。任何事件模型（含 `main.Incident`）都必須保留 `affected_road` 欄位。
 
 ### 約束 7：AI 輸出格式規範
 
@@ -169,11 +220,13 @@ city-commander-agent/
 ├── backend/
 │   ├── main.py                  # FastAPI 入口、API、WebSocket、前端靜態服務
 │   ├── agents/
-│   │   ├── architect.py         # 總指揮與 What-if
-│   │   ├── policy.py            # 法規驗證
+│   │   ├── sop_rules.py         # SOP 門檻／事件分類／上下游判定（規則單一來源）
+│   │   ├── traffic_math.py      # 唯一數學計算模組
+│   │   ├── policy.py            # 法規驗證與條文原文擷取
 │   │   ├── router.py            # 路網 Agent
 │   │   ├── comms.py             # 多語通報 Agent
-│   │   └── traffic_math.py      # 唯一數學計算模組
+│   │   ├── advisor_tools.py     # What-if 顧問工具
+│   │   └── architect.py         # 總指揮、預警摘要、What-if
 │   └── Dockerfile               # React + FastAPI 正式單一映像
 ├── frontend/
 │   ├── src/

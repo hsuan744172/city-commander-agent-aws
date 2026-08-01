@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Crosshair, LayoutGrid, Siren } from "lucide-react";
+import { ArrowLeft, Crosshair, LayoutGrid, Siren, Timer } from "lucide-react";
 import IncidentMap from "./IncidentMap";
 import AdvisoryCard from "./AdvisoryCard";
 import StreetCam from "./StreetCam";
-import AlertTicker from "./AlertTicker";
+import AutoAdvisoryPanel from "./AutoAdvisoryPanel";
 import TrendChart from "./TrendChart";
-import useNetworkStatus from "../lib/useNetworkStatus";
 import { fetchRecentInjections } from "../lib/incidentInjection";
 import { cn } from "../lib/utils";
 
@@ -23,6 +22,7 @@ function levelBadge(level) {
  * focusSegmentId：由儀表板點擊路段或事件小卡帶入，聚焦顯示該路段的處置資訊
  */
 export default function IncidentTab({
+  network,
   report: injectedReport = null,
   focusSegmentId = null,
   onClearFocus,
@@ -34,7 +34,8 @@ export default function IncidentTab({
   const [latestReport, setLatestReport] = useState(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [pinnedSegmentId, setPinnedSegmentId] = useState(null);
-  const { segments, timestamp, autoAdvisories } = useNetworkStatus();
+  // 路網狀態由 App 統一訂閱後傳入，各分頁不再各自輪詢
+  const { segments, timestamp, autoAdvisories, monitoredAlerts, thresholds } = network;
 
   useEffect(() => {
     if (injectedReport) return undefined;
@@ -78,7 +79,7 @@ export default function IncidentTab({
   const detailSegment = focusSegment || trackedSegment;
 
   // 聚焦模式只呈現該路段的預警與自動路徑引導
-  const tickerSegments = focusMode && focusSegment ? [focusSegment] : segments;
+
   const tickerAdvisories = focusMode
     ? autoAdvisories.filter((a) => a.segment_id === focusSegmentId)
     : autoAdvisories;
@@ -188,8 +189,26 @@ export default function IncidentTab({
 
           {/* 右側：事件卡片列表 */}
           <div className="space-y-3 overflow-y-auto max-h-[760px] pr-1">
-            <div className="text-xs text-[var(--muted-foreground)] mb-1">
-              {report.generated_at} — {report.processed}/{report.total_incidents} 件處理完成
+            <div className="flex items-center gap-2 flex-wrap text-xs text-[var(--muted-foreground)] mb-1">
+              <span>{report.generated_at}</span>
+              <span>
+                {report.processed}/{report.total_incidents} 件處理完成
+              </span>
+              {/* 端到端耗時：命題要求 60 秒內完成，這是現場可直接驗證的證據 */}
+              {report.elapsed_seconds != null && (
+                <span
+                  title="從注入到建議書產出的端到端耗時"
+                  className={cn(
+                    "flex items-center gap-1 px-1.5 py-0.5 rounded-sm font-medium",
+                    report.within_budget
+                      ? "bg-[var(--status-success)]/15 text-[var(--status-success)]"
+                      : "bg-[var(--status-error)]/15 text-[var(--status-error)]",
+                  )}
+                >
+                  <Timer className="w-3 h-3" />
+                  端到端 {report.elapsed_seconds} 秒 / 預算 {report.budget_seconds ?? 60} 秒
+                </span>
+              )}
             </div>
             {advisories.map((adv, idx) => (
               <AdvisoryCard
@@ -218,8 +237,15 @@ export default function IncidentTab({
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
           <div className="space-y-4">
-            <AlertTicker segments={tickerSegments} autoAdvisories={tickerAdvisories} />
-            <TrendChart selectedSegment={detailSegment} simTime={timestamp} />
+            <AutoAdvisoryPanel
+              advisories={tickerAdvisories}
+              monitoredAlerts={focusMode ? [] : monitoredAlerts}
+            />
+            <TrendChart
+              selectedSegment={detailSegment}
+              simTime={timestamp}
+              thresholds={thresholds}
+            />
           </div>
 
           <div className="space-y-2">
