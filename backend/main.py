@@ -48,7 +48,7 @@ from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, UploadFile  
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
-from pydantic import BaseModel  # noqa: E402
+from pydantic import BaseModel, ValidationError  # noqa: E402
 
 from backend import sim_clock  # noqa: E402
 from backend.agents.architect import run_commander  # noqa: E402
@@ -62,6 +62,8 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
+MAX_UPLOAD_INCIDENTS = int(os.environ.get("MAX_UPLOAD_INCIDENTS", "3"))
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", "1048576"))
 
 # 時間推進時是否主動推播到 WebSocket
 PUSH_ON_TICK = (os.environ.get("SIM_CLOCK_PUSH", "true").strip().lower()
@@ -501,29 +503,75 @@ async def upload_incidents(
     file: UploadFile,
     ts: str | None = Query(None, description="本次分析套用的模擬時間"),
 ):
-    """上傳 live_incidents.json 檔案，解析後注入系統。"""
-    import json as json_mod
-
+    """上傳並驗證 live_incidents.json，再執行有限批次的應變分析。"""
     try:
         content = await file.read()
-        data = json_mod.loads(content.decode("utf-8"))
+        if not content:
+            return JSONResponse(status_code=400, content={"error": "上傳檔案不可為空"})
+        if len(content) > MAX_UPLOAD_BYTES:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"檔案超過大小限制（{MAX_UPLOAD_BYTES} bytes）"},
+            )
 
-        # 支援兩種格式：直接陣列 [...] 或 {"incidents": [...]}
+        try:
+            data = json.loads(content.decode("utf-8"))
+        except UnicodeDecodeError:
+            return JSONResponse(status_code=400, content={"error": "檔案必須是 UTF-8 編碼的 JSON"})
+        except json.JSONDecodeError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"JSON 解析失敗：第 {exc.lineno} 行第 {exc.colno} 欄格式錯誤"},
+            )
+
+        # 支援兩種格式：直接陣列 [...] 或 {"incidents": [...]}。
         if isinstance(data, list):
-            incidents = data
+            raw_incidents = data
         elif isinstance(data, dict) and "incidents" in data:
-            incidents = data["incidents"]
+            raw_incidents = data["incidents"]
         else:
-            return JSONResponse(status_code=400, content={"error": "JSON 格式不正確，需為陣列或含 incidents 欄位"})
+            return JSONResponse(
+                status_code=400,
+                content={"error": "JSON 格式不正確，需為事件陣列或含 incidents 陣列的物件"},
+            )
+
+        if not isinstance(raw_incidents, list) or not raw_incidents:
+            return JSONResponse(status_code=400, content={"error": "incidents 必須是至少包含一筆事件的陣列"})
+        if len(raw_incidents) > MAX_UPLOAD_INCIDENTS:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"單次最多可上傳 {MAX_UPLOAD_INCIDENTS} 件事件，請拆分檔案後重試"},
+            )
+
+        incidents = []
+        for index, item in enumerate(raw_incidents, start=1):
+            try:
+                incidents.append(Incident.model_validate(item).model_dump())
+            except ValidationError as exc:
+                logger.info("上傳事件驗證失敗：第 %s 筆", index)
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": f"第 {index} 筆事件格式不正確，需至少提供 event_id",
+                        "details": exc.errors(include_url=False),
+                    },
+                )
 
         session_id = f"upload_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        logger.info("開始處理上傳事件：檔案=%s，事件數=%s", file.filename, len(incidents))
         report = await asyncio.to_thread(
             run_commander, {"incidents": incidents}, session_id, ts,
         )
+        logger.info(
+            "上傳事件處理完成：session=%s，processed=%s，failed=%s",
+            session_id,
+            report.get("processed", 0),
+            report.get("failed", 0),
+        )
         return JSONResponse(content=report)
-
-    except Exception as e:
-        return JSONResponse(status_code=400, content={"error": f"檔案解析失敗: {type(e).__name__}: {e}"})
+    except Exception:
+        logger.exception("上傳事件處理失敗：檔案=%s", file.filename)
+        return JSONResponse(status_code=500, content={"error": "事件處理失敗，請稍後重試"})
 
 
 @app.post("/api/what-if")

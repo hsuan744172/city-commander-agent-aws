@@ -1,4 +1,4 @@
-# Build the React dashboard first so App Runner can serve the complete application.
+# Build the React dashboard first so ECS Fargate can serve the complete application.
 FROM node:22-slim AS frontend-build
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./

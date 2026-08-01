@@ -17,10 +17,21 @@ export default function IncidentUpload({ onResult }) {
 
     try {
       const res = await fetch("/api/incidents/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      if (data.error) {
+      const isJson = res.headers.get("content-type")?.includes("application/json");
+      const data = isJson ? await res.json() : null;
+
+      if (!res.ok || data?.error) {
         setStatus("error");
-        setDetail(data.error);
+        setDetail(
+          data?.error
+            || (res.status === 504
+              ? "伺服器處理逾時，請確認檔案為事件 JSON 並減少事件數。"
+              : `上傳失敗（HTTP ${res.status}），請稍後再試。`)
+        );
+      } else if ((data?.failed || 0) > 0) {
+        setStatus("error");
+        setDetail(`${data.processed}/${data.total_incidents} 件事件完成，${data.failed} 件處理失敗，請檢查事件內容後重試。`);
+        onResult(data);
       } else {
         setStatus("success");
         setDetail(`${data.processed}/${data.total_incidents} 件事件已完成路網重規劃`);

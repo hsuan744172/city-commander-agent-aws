@@ -13,6 +13,8 @@ TASK_ROLE_NAME="${TASK_ROLE_NAME:-CityCommanderEcsTaskRole}"
 ALB_NAME="${ALB_NAME:-city-commander-alb}"
 TARGET_GROUP_NAME="${TARGET_GROUP_NAME:-city-commander-tg}"
 TASK_FAMILY="${TASK_FAMILY:-city-commander-agent}"
+LOG_GROUP_NAME="${LOG_GROUP_NAME:-/ecs/city-commander-agent}"
+MAX_UPLOAD_INCIDENTS="${MAX_UPLOAD_INCIDENTS:-3}"
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || { echo "Required command not found: $1" >&2; exit 1; }
@@ -24,6 +26,9 @@ ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text --region
 IMAGE_TAG="${IMAGE_TAG:-$(date -u +%Y%m%d%H%M%S)}"
 ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
 IMAGE_URI="${ECR_URI}:${IMAGE_TAG}"
+
+aws logs create-log-group --log-group-name "$LOG_GROUP_NAME" --region "$AWS_REGION" >/dev/null 2>&1 || true
+aws logs put-retention-policy --log-group-name "$LOG_GROUP_NAME" --retention-in-days 14 --region "$AWS_REGION" >/dev/null 2>&1 || true
 
 if ! aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" --region "$AWS_REGION" >/dev/null 2>&1; then
   aws ecr create-repository --repository-name "$ECR_REPOSITORY" --region "$AWS_REGION" >/dev/null
@@ -164,8 +169,18 @@ cat >"$TEMP_DIR/task-definition.json" <<JSON
     "environment": [
       {"name": "APP_AWS_REGION", "value": "$AWS_REGION"},
       {"name": "BEDROCK_MODEL_ID", "value": "$MODEL_ID"},
+      {"name": "SIM_DATA_MODE", "value": "asof"},
+      {"name": "MAX_UPLOAD_INCIDENTS", "value": "$MAX_UPLOAD_INCIDENTS"},
       {"name": "PORT", "value": "8080"}
-    ]
+    ],
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "options": {
+        "awslogs-group": "$LOG_GROUP_NAME",
+        "awslogs-region": "$AWS_REGION",
+        "awslogs-stream-prefix": "ecs"
+      }
+    }
   }]
 }
 JSON
