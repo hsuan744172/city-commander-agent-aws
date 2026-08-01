@@ -1,17 +1,27 @@
-FROM python:3.13-slim
+# Build the React dashboard first so App Runner can serve the complete application.
+FROM node:22-slim AS frontend-build
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
 
+# Supply a pinned uv binary to the production image.
+FROM ghcr.io/astral-sh/uv:0.10.0 AS uv
+
+# Run FastAPI and serve the compiled dashboard from the same origin.
+FROM python:3.13-slim
 WORKDIR /app
 
-# Install dependencies
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=uv /uv /uvx /usr/local/bin/
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
 
-# Copy application code
 COPY backend/ ./backend/
 COPY data/ ./data/
+COPY --from=frontend-build /frontend/dist ./frontend_dist/
 
-# Expose port
-EXPOSE 8000
-
-# Run
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENV PATH="/app/.venv/bin:${PATH}"
+ENV PORT=8080
+EXPOSE 8080
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8080}"]

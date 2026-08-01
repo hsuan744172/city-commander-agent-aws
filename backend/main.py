@@ -24,6 +24,7 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend.agents.architect import run_commander
@@ -292,6 +293,17 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_text(json.dumps(report, ensure_ascii=False))
     except WebSocketDisconnect:
         connected_clients.remove(websocket)
+
+
+# ---------------------------------------------------------------------------
+# Production dashboard hosting
+# ---------------------------------------------------------------------------
+
+# The App Runner image copies the Vite build here. Mounting this after API and
+# WebSocket routes preserves same-origin /api and /ws access for the dashboard.
+FRONTEND_DIST_DIR = PROJECT_ROOT / "frontend_dist"
+if FRONTEND_DIST_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST_DIR, html=True), name="frontend")
 
 
 # ---------------------------------------------------------------------------

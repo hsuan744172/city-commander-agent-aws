@@ -1,0 +1,15 @@
+.git/
+.kiro/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+node_modules/
+dist/
+.env
+.env.*
+*.log
+.DS_Store

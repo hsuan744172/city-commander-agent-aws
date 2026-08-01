@@ -1,34 +1,4 @@
 {
   "mcpServers": {
-    "TrafficMath-MCP": {
-      "command": "poetry",
-      "args": ["run", "python", "src/mcp_servers/traffic_math_mcp.py"],
-      "disabled": false
-    },
-    "SOP-RAG-MCP": {
-      "command": "poetry",
-      "args": ["run", "python", "src/mcp_servers/sop_rag_mcp.py"],
-      "disabled": false
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./data"],
-      "disabled": false
-    },
-    "memory": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory"],
-      "disabled": false
-    },
-    "fetch": {
-      "command": "poetry",
-      "args": ["run", "python", "-m", "mcp_server_fetch"],
-      "disabled": false
-    },
-    "sqlite": {
-      "command": "poetry",
-      "args": ["run", "python", "-m", "mcp_server_sqlite", "--db-path", "./data/traffic.db"],
-      "disabled": false
-    }
   }
 }
