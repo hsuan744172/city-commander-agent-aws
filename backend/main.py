@@ -234,6 +234,74 @@ def _build_status(ts: str | None = None) -> dict:
 
         data_as_of = max((s["data_as_of"] for s in segments), default=None)
 
+        # --- 人流密度觀測站 (signaling_crowd_density.csv) — 帶插值 ---
+        stations = []
+        crowd_csv = get_data_path("signaling_crowd_density.csv")
+        if crowd_csv.exists():
+            try:
+                crowd_df = pd.read_csv(crowd_csv, parse_dates=["Timestamp"])
+                # 解析 Roaming_User_Pct 欄位（去掉 % 符號）
+                crowd_df["_roaming_num"] = (
+                    crowd_df["Roaming_User_Pct"]
+                    .astype(str).str.replace("%", "", regex=False)
+                    .astype(float)
+                )
+
+                for bs_id, group in crowd_df.groupby("BS_ID"):
+                    group = group.sort_values("Timestamp")
+                    past = group[group["Timestamp"] <= current]
+                    future = group[group["Timestamp"] > current]
+
+                    if past.empty:
+                        # 時鐘早於資料集起點，用第一筆
+                        row = group.iloc[0]
+                        weight = 0.0
+                    elif future.empty:
+                        # 時鐘已超過資料集末尾，用最後一筆
+                        row = past.iloc[-1]
+                        weight = 0.0
+                    else:
+                        # 在兩筆之間做線性插值
+                        prev_row = past.iloc[-1]
+                        next_row = future.iloc[0]
+                        t0 = prev_row["Timestamp"]
+                        t1 = next_row["Timestamp"]
+                        span = (t1 - t0).total_seconds()
+                        elapsed = (current - t0).total_seconds()
+                        weight = elapsed / span if span > 0 else 0.0
+
+                        # 插值數值欄位
+                        user_count = int(prev_row["User_Count"] + weight * (next_row["User_Count"] - prev_row["User_Count"]))
+                        stay_time = int(prev_row["Stay_Time_Avg"] + weight * (next_row["Stay_Time_Avg"] - prev_row["Stay_Time_Avg"]))
+                        growth_rate = round(prev_row["Growth_Rate"] + weight * (next_row["Growth_Rate"] - prev_row["Growth_Rate"]), 3)
+                        roaming_pct = round(prev_row["_roaming_num"] + weight * (next_row["_roaming_num"] - prev_row["_roaming_num"]), 1)
+
+                        stations.append({
+                            "bs_id": bs_id,
+                            "location_name": prev_row["Location_Name"],
+                            "user_count": user_count,
+                            "stay_time_avg": stay_time,
+                            "growth_rate": growth_rate,
+                            "roaming_user_pct": roaming_pct,
+                            "data_as_of": current.strftime(sim_clock.TIME_FMT),
+                        })
+                        continue
+
+                    # 非插值情況（首筆或末筆）
+                    stations.append({
+                        "bs_id": bs_id,
+                        "location_name": row["Location_Name"],
+                        "user_count": int(row["User_Count"]),
+                        "stay_time_avg": int(row["Stay_Time_Avg"]),
+                        "growth_rate": round(float(row["Growth_Rate"]), 2),
+                        "roaming_user_pct": float(row["_roaming_num"]),
+                        "data_as_of": pd.Timestamp(row["Timestamp"]).strftime(sim_clock.TIME_FMT),
+                    })
+
+                stations.sort(key=lambda s: s["bs_id"])
+            except Exception as e:
+                logger.warning(f"人流密度資料讀取失敗: {type(e).__name__}: {e}")
+
         return {
             "timestamp": ts_str,          # 當下模擬時間 (前端主要顯示這個)
             "sim_time": ts_str,
@@ -242,6 +310,7 @@ def _build_status(ts: str | None = None) -> dict:
             "clock": sim_clock.state(),
             "total_segments": len(segments),
             "segments": segments,
+            "stations": stations,
             "auto_advisories": auto_advisories,
         }
 

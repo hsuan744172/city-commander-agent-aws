@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Map, NavigationControl, Popup } from "maplibre-gl";
+import { Map as MaplibreMap, NavigationControl, Popup } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 // ============================================================
@@ -52,6 +52,7 @@ const STATION_COORDS = {
   BS_TPE_101:    [121.5644995, 25.0338352],  // 台北101廣場
   BS_BUS_TERM:   [121.5651415, 25.0405413],  // 市府轉運站
   BS_XY_ATT:     [121.5662040, 25.0356567],  // ATT4FUN周邊
+  BS_PARK_ZS:    [121.5596096, 25.0394803],  // 中山公園
 };
 
 const STATION_NAMES = {
@@ -63,23 +64,62 @@ const STATION_NAMES = {
   BS_TPE_101:    "台北101廣場",
   BS_BUS_TERM:   "市府轉運站",
   BS_XY_ATT:     "ATT4FUN周邊",
+  BS_PARK_ZS:    "中山公園",
 };
 
 /**
- * 建立站點 GeoJSON
+ * 建立站點 GeoJSON — 結合靜態座標與動態人流資料
  */
-function buildStationGeoJSON() {
-  const features = Object.entries(STATION_COORDS).map(([id, coords]) => ({
-    type: "Feature",
-    properties: {
-      bs_id: id,
-      name: STATION_NAMES[id] || id,
-    },
-    geometry: {
-      type: "Point",
-      coordinates: coords,
-    },
-  }));
+function buildStationGeoJSON(stations = []) {
+  const stationDataMap = new Map(stations.map((s) => [s.bs_id, s]));
+  const features = Object.entries(STATION_COORDS).map(([id, coords]) => {
+    const data = stationDataMap.get(id);
+    const hasData = data && data.user_count > 0;
+
+    // 半徑：無資料=6, 有資料依 user_count 線性映射 6~22
+    let radius = 6;
+    if (hasData) {
+      const count = data.user_count;
+      if (count >= 45000) radius = 22;
+      else if (count >= 30000) radius = 18;
+      else if (count >= 15000) radius = 12;
+      else if (count >= 5000) radius = 8;
+      else radius = 6;
+    }
+
+    // 顏色：無資料=白色, 有資料依 growth_rate
+    let fillColor = "#ffffff";
+    let strokeColor = "#94a3b8";
+    if (hasData) {
+      const rate = data.growth_rate;
+      if (rate >= 0.5) fillColor = "#dc2626";
+      else if (rate >= 0.2) fillColor = "#f97316";
+      else if (rate >= 0) fillColor = "#22c55e";
+      else if (rate >= -0.3) fillColor = "#3b82f6";
+      else fillColor = "#6366f1";
+      strokeColor = "#ffffff";
+    }
+
+    return {
+      type: "Feature",
+      properties: {
+        bs_id: id,
+        name: data?.location_name || STATION_NAMES[id] || id,
+        user_count: data?.user_count ?? 0,
+        growth_rate: data?.growth_rate ?? 0,
+        roaming_user_pct: data?.roaming_user_pct ?? 0,
+        stay_time_avg: data?.stay_time_avg ?? 0,
+        has_roaming_alert: (data?.roaming_user_pct ?? 0) >= 30 ? 1 : 0,
+        radius: radius,
+        fill_color: fillColor,
+        stroke_color: strokeColor,
+      },
+      geometry: {
+        type: "Point",
+        coordinates: coords,
+      },
+    };
+  });
   return { type: "FeatureCollection", features };
 }
 
@@ -154,7 +194,7 @@ function buildRoadGeoJSON(segments, selectedIds = []) {
  * - 道路線依飽和度即時漸變色
  * - 串接後端 /api/status 自動刷新
  */
-export default function CityMap3D({ segments = [], selectedSegmentIds = [], onSegmentClick, className = "" }) {
+export default function CityMap3D({ segments = [], stations = [], selectedSegmentIds = [], onSegmentClick, className = "" }) {
   const mapContainer = useRef(null);
   const mapRef = useRef(null);
   const popupRef = useRef(null);
@@ -166,7 +206,7 @@ export default function CityMap3D({ segments = [], selectedSegmentIds = [], onSe
   useEffect(() => {
     if (mapRef.current || !mapContainer.current) return;
 
-    const map = new Map({
+    const map = new MaplibreMap({
       container: mapContainer.current,
       style: "https://tiles.openfreemap.org/styles/bright",
       center: [121.5580, 25.0400], // 信義計畫區中心
@@ -179,6 +219,7 @@ export default function CityMap3D({ segments = [], selectedSegmentIds = [], onSe
     map.addControl(new NavigationControl(), "top-right");
 
     map.on("load", () => {
+      try {
       // --- 3D 建築圖層 ---
       const layers = map.getStyle().layers;
       let labelLayerId;
@@ -219,12 +260,7 @@ export default function CityMap3D({ segments = [], selectedSegmentIds = [], onSe
               14, 0,
               15.5, ["get", "render_height"],
             ],
-            "fill-extrusion-base": [
-              "case",
-              [">=", ["get", "zoom"], 16],
-              ["get", "render_min_height"],
-              0,
-            ],
+            "fill-extrusion-base": ["get", "render_min_height"],
             "fill-extrusion-opacity": 0.75,
           },
         },
@@ -319,24 +355,26 @@ export default function CityMap3D({ segments = [], selectedSegmentIds = [], onSe
       });
 
       // --- 路段標籤 ---
-      map.addLayer({
-        id: "traffic-roads-labels",
-        type: "symbol",
-        source: "traffic-roads",
-        layout: {
-          "symbol-placement": "line-center",
-          "text-field": ["get", "road_name"],
-          "text-size": 12,
-          "text-font": ["Noto Sans Regular"],
-          "text-allow-overlap": false,
-          "text-ignore-placement": false,
-        },
-        paint: {
-          "text-color": "#1a1a2e",
-          "text-halo-color": "rgba(255,255,255,0.9)",
-          "text-halo-width": 2,
-        },
-      });
+      try {
+        map.addLayer({
+          id: "traffic-roads-labels",
+          type: "symbol",
+          source: "traffic-roads",
+          layout: {
+            "symbol-placement": "line-center",
+            "text-field": ["get", "road_name"],
+            "text-size": 12,
+            "text-font": ["Noto Sans Regular"],
+            "text-allow-overlap": false,
+            "text-ignore-placement": false,
+          },
+          paint: {
+            "text-color": "#1a1a2e",
+            "text-halo-color": "rgba(255,255,255,0.9)",
+            "text-halo-width": 2,
+          },
+        });
+      } catch (e) { console.warn("[CityMap3D] road labels failed:", e); }
 
       // --- 人流密度觀測站標記 ---
       map.addSource("stations", {
@@ -344,46 +382,71 @@ export default function CityMap3D({ segments = [], selectedSegmentIds = [], onSe
         data: buildStationGeoJSON(),
       });
 
-      // 站點圓圈
+      // 站點圓圈（固定紫色，收到資料後由 useEffect 更新）
       map.addLayer({
         id: "stations-circle",
         type: "circle",
         source: "stations",
         paint: {
-          "circle-radius": 8,
-          "circle-color": "#6366f1",
-          "circle-stroke-color": "#ffffff",
+          "circle-radius": ["get", "radius"],
+          "circle-color": ["get", "fill_color"],
+          "circle-stroke-color": ["get", "stroke_color"],
           "circle-stroke-width": 2,
           "circle-opacity": 0.9,
         },
       });
 
       // 站點名稱標籤
-      map.addLayer({
-        id: "stations-labels",
-        type: "symbol",
-        source: "stations",
-        layout: {
-          "text-field": ["get", "name"],
-          "text-size": 11,
-          "text-font": ["Noto Sans Regular"],
-          "text-offset": [0, 1.5],
-          "text-anchor": "top",
-          "text-allow-overlap": false,
-        },
-        paint: {
-          "text-color": "#4338ca",
-          "text-halo-color": "rgba(255,255,255,0.9)",
-          "text-halo-width": 1.5,
-        },
-      });
+      try {
+        map.addLayer({
+          id: "stations-labels",
+          type: "symbol",
+          source: "stations",
+          layout: {
+            "text-field": ["get", "name"],
+            "text-size": 11,
+            "text-font": ["Noto Sans Regular"],
+            "text-offset": [0, 1.8],
+            "text-anchor": "top",
+            "text-allow-overlap": false,
+          },
+          paint: {
+            "text-color": "#4338ca",
+            "text-halo-color": "rgba(255,255,255,0.9)",
+            "text-halo-width": 1.5,
+          },
+        });
+      } catch (e) { console.warn("[CityMap3D] station labels failed:", e); }
 
       // 站點 hover popup
-      map.on("mouseenter", "stations-circle", () => {
+      map.on("mouseenter", "stations-circle", (e) => {
         map.getCanvas().style.cursor = "pointer";
+        if (!e.features?.length) return;
+        const props = e.features[0].properties;
+        const roamingAlert = props.has_roaming_alert === 1
+          ? '<div style="color:#f59e0b;font-weight:bold;margin-top:4px">🌐 漫遊率 ≥ 30% — 需多語通報</div>'
+          : "";
+        const rateLabel = props.growth_rate > 0 ? `+${props.growth_rate}` : `${props.growth_rate}`;
+        const html = `
+          <div style="font-family:sans-serif;font-size:13px;line-height:1.6;min-width:160px">
+            <strong style="font-size:14px">${props.name}</strong>
+            <div style="margin-top:4px">人流：<b>${Number(props.user_count).toLocaleString()}</b> 人</div>
+            <div>增長率：<b>${rateLabel}</b></div>
+            <div>漫遊率：${props.roaming_user_pct}%</div>
+            <div style="color:#666;font-size:11px">平均停留 ${props.stay_time_avg} 分鐘</div>
+            ${roamingAlert}
+          </div>
+        `;
+        if (popupRef.current) {
+          popupRef.current.setLngLat(e.lngLat).setHTML(html);
+        } else {
+          popupRef.current = new Popup({ closeButton: false, closeOnClick: false, offset: 12 })
+            .setLngLat(e.lngLat).setHTML(html).addTo(map);
+        }
       });
       map.on("mouseleave", "stations-circle", () => {
         map.getCanvas().style.cursor = "";
+        if (popupRef.current) { popupRef.current.remove(); popupRef.current = null; }
       });
 
       // --- Popup 互動 (使用 hitarea 圖層偵測) ---
@@ -450,6 +513,10 @@ export default function CityMap3D({ segments = [], selectedSegmentIds = [], onSe
       });
 
       setMapLoaded(true);
+      } catch (err) {
+        console.error("[CityMap3D] Map load error:", err);
+        setMapLoaded(true); // still try to load data
+      }
     });
 
     mapRef.current = map;
@@ -470,6 +537,17 @@ export default function CityMap3D({ segments = [], selectedSegmentIds = [], onSe
     const geojson = buildRoadGeoJSON(segments, selectedSegmentIds);
     source.setData(geojson);
   }, [segments, selectedSegmentIds, mapLoaded]);
+
+  // 當 stations 資料更新時，更新站點圖層
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current) return;
+    const map = mapRef.current;
+    const source = map.getSource("stations");
+    if (!source) return;
+
+    const geojson = buildStationGeoJSON(stations);
+    source.setData(geojson);
+  }, [stations, mapLoaded]);
 
   return (
     <div className={`relative rounded-xl overflow-hidden border border-gray-200 shadow-sm ${className}`}>

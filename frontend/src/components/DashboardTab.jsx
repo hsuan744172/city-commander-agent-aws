@@ -16,6 +16,7 @@ const IDLE_POLL_MS = 10000;
 
 export default function DashboardTab() {
   const [segments, setSegments] = useState([]);
+  const [stations, setStations] = useState([]);
   const [ts, setTs] = useState("");
   const [showAlert, setShowAlert] = useState(false);
   const [alertShownOnce, setAlertShownOnce] = useState(false);
@@ -46,6 +47,7 @@ export default function DashboardTab() {
 
         clock = data.clock;
         setSegments(data.segments || []);
+        setStations(data.stations || []);
         setTs(data.timestamp || "");
         setAutoAdvisories(data.auto_advisories || []);
 
@@ -112,6 +114,7 @@ export default function DashboardTab() {
       {/* 3D 城市地圖：道路飽和度即時漸變，點擊路段加入趨勢圖 */}
       <CityMap3D
         segments={segments}
+        stations={stations}
         selectedSegmentIds={chartSegments.map((s) => s.segment_id)}
         onSegmentClick={handleAddToChart}
         className="h-[520px]"
