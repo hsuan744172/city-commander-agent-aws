@@ -1,8 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import ThreatGrid from "./ThreatGrid";
 import TrendChart from "./TrendChart";
 import AlertTicker from "./AlertTicker";
+
+// 輪詢節奏：後端模擬時鐘會回報下一次時間變動的秒數，前端照它排程。
+const MIN_POLL_MS = 1000;      // 避免時鐘 interval 設太小時打爆後端
+const MAX_POLL_MS = 30000;
+const IDLE_POLL_MS = 10000;    // fixed / latest 模式：時間不會動，慢慢輪即可
 
 export default function DashboardTab() {
   const [segments, setSegments] = useState([]);
@@ -11,30 +16,54 @@ export default function DashboardTab() {
   const [alertShownOnce, setAlertShownOnce] = useState(false);
   const [chartSegments, setChartSegments] = useState([]);
   const [autoAdvisories, setAutoAdvisories] = useState([]);
+  const alertShownRef = useRef(false);
 
   useEffect(() => {
+    let timer;
+    let cancelled = false;
+
+    // 跟著後端時鐘走：時鐘 interval 或模式改變時，前端不需要跟著改設定。
+    // 連續模式 (smooth/auto) 回報固定輪詢節奏；playback 則對齊下次跳格的時間點。
+    const scheduleNext = (clock) => {
+      const hint = clock?.suggested_poll_seconds ?? clock?.next_change_in_seconds;
+      const delay =
+        hint == null
+          ? IDLE_POLL_MS
+          : Math.min(Math.max(hint * 1000 + 250, MIN_POLL_MS), MAX_POLL_MS);
+      timer = setTimeout(load, delay);
+    };
+
     const load = async () => {
+      let clock = null;
       try {
         const res = await fetch("/api/status");
         const data = await res.json();
+        if (cancelled) return;
+
+        clock = data.clock;
         setSegments(data.segments || []);
         setTs(data.timestamp || "");
         setAutoAdvisories(data.auto_advisories || []);
 
         // 首次載入自動彈一次警報
-        if (!alertShownOnce) {
+        if (!alertShownRef.current) {
           const hasCritical = (data.segments || []).some((s) => s.level === "A" || s.level === "B");
           if (hasCritical) {
+            alertShownRef.current = true;
             setShowAlert(true);
             setAlertShownOnce(true);
           }
         }
       } catch {}
+      if (!cancelled) scheduleNext(clock);
     };
+
     load();
-    const interval = setInterval(load, 30000);
-    return () => clearInterval(interval);
-  }, [alertShownOnce]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, []);
 
   // 點擊卡片：toggle 加入/移除折線圖
   const handleAddToChart = (segment) => {
@@ -60,10 +89,11 @@ export default function DashboardTab() {
         chartSegmentIds={chartSegments.map((s) => s.segment_id)}
       />
 
-      {/* 中段：折線圖 (預設空，由上方拖入) */}
+      {/* 中段：折線圖 (預設空，由上方拖入)；simTime 變動時重抓，讓曲線隨時鐘成長 */}
       <TrendChart
         selectedSegments={chartSegments}
         onRemove={handleRemoveFromChart}
+        simTime={ts}
       />
 
       {/* 底部：預警快訊 + 自動路徑引導 */}

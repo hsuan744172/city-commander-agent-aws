@@ -7,9 +7,13 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
 from pathlib import Path
 
 import pandas as pd
+
+from backend import sim_clock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
@@ -17,6 +21,26 @@ DATA_DIR = PROJECT_ROOT / "data"
 TRAFFIC_FLOW_CSV = DATA_DIR / "city_traffic_flow.csv"
 ROAD_NETWORK_JSON = DATA_DIR / "road_network_geometry.json"
 CROWD_DENSITY_CSV = DATA_DIR / "signaling_crowd_density.csv"
+
+# 資料切片語意 (SIM_DATA_MODE)：
+#   interpolate (預設) — 在前後兩筆量測之間對數值欄位做線性插值，數值連續變化。
+#                        搭配 smooth/auto 時鐘模式可得平滑曲線。
+#   asof              — 每個路段/基地台取「<= 查詢時間」的最新一筆 (forward fill)，
+#                        數值呈階梯狀跳動。
+#   exact             — 只取單一時間點的切片 (<= 查詢時間的最後一個時間點)。
+#
+# ⚠️ interpolate 會參考「下一筆」量測來做混合，因此嚴格來說會用到查詢時間之後的資料。
+#    這對「重播一段已錄好的歷史」是合理的；若情境要求絕不觸碰未來資料，請用 asof。
+DATA_MODE_ENV = "SIM_DATA_MODE"
+DATA_MODES = ("interpolate", "asof", "exact")
+
+# 這些欄位不參與插值 (時間欄與類別欄由「前一筆」延續)
+NON_INTERPOLATED = {"Timestamp", "Interp_Weight"}
+
+
+def _data_mode() -> str:
+    mode = (os.environ.get(DATA_MODE_ENV) or "interpolate").strip().lower()
+    return mode if mode in DATA_MODES else "interpolate"
 
 
 def _safe_pct_to_float(series: pd.Series) -> pd.Series:
@@ -30,36 +54,125 @@ def _safe_pct_to_float(series: pd.Series) -> pd.Series:
     return series.apply(convert)
 
 
+# --- CSV 快取 (依 mtime 失效)：輪播時每秒可能被查詢多次，避免重複 IO ---------
+
+_cache: dict[str, tuple[int, object]] = {}
+_cache_lock = threading.Lock()
+
+
+def _cached(path: Path, builder):
+    stamp = path.stat().st_mtime_ns if path.exists() else 0
+    key = str(path)
+    with _cache_lock:
+        hit = _cache.get(key)
+        if hit and hit[0] == stamp:
+            return hit[1]
+    value = builder()
+    with _cache_lock:
+        _cache[key] = (stamp, value)
+    return value
+
+
 def _load_traffic_flow() -> pd.DataFrame:
-    df = pd.read_csv(TRAFFIC_FLOW_CSV, parse_dates=["Timestamp"])
-    df["Saturation_Score"] = _safe_pct_to_float(df["Saturation_Score"])
-    return df
+    def build() -> pd.DataFrame:
+        df = pd.read_csv(TRAFFIC_FLOW_CSV, parse_dates=["Timestamp"])
+        df["Saturation_Score"] = _safe_pct_to_float(df["Saturation_Score"])
+        return df.sort_values("Timestamp")
+    return _cached(TRAFFIC_FLOW_CSV, build).copy()
 
 
 def _load_road_network() -> list[dict]:
-    with open(ROAD_NETWORK_JSON, encoding="utf-8") as f:
-        return json.load(f)
+    def build() -> list[dict]:
+        with open(ROAD_NETWORK_JSON, encoding="utf-8") as f:
+            return json.load(f)
+    return _cached(ROAD_NETWORK_JSON, build)
 
 
 def _load_crowd_density() -> pd.DataFrame:
-    df = pd.read_csv(CROWD_DENSITY_CSV, parse_dates=["Timestamp"])
-    df["Roaming_User_Pct"] = _safe_pct_to_float(df["Roaming_User_Pct"])
-    return df
+    def build() -> pd.DataFrame:
+        df = pd.read_csv(CROWD_DENSITY_CSV, parse_dates=["Timestamp"])
+        df["Roaming_User_Pct"] = _safe_pct_to_float(df["Roaming_User_Pct"])
+        return df.sort_values("Timestamp")
+    return _cached(CROWD_DENSITY_CSV, build).copy()
 
 
-def _get_time_slice(df: pd.DataFrame, timestamp: str | None) -> tuple[pd.DataFrame, pd.Timestamp]:
-    """取得指定時間或最接近時間的資料切片。"""
-    if timestamp:
-        ts = pd.Timestamp(timestamp)
-    else:
-        ts = df["Timestamp"].max()
+def _asof_rows(df: pd.DataFrame, ts: pd.Timestamp, key_col: str) -> pd.DataFrame:
+    """每個 key 取 <= ts 的最新一筆。"""
+    past = df[df["Timestamp"] <= ts]
+    if past.empty:
+        past = df[df["Timestamp"] == df["Timestamp"].min()]
+    return past.loc[sorted(past.groupby(key_col)["Timestamp"].idxmax())]
 
-    time_df = df[df["Timestamp"] == ts]
-    if time_df.empty:
-        closest_idx = (df["Timestamp"] - ts).abs().argsort().iloc[0]
-        ts = df.iloc[closest_idx]["Timestamp"]
-        time_df = df[df["Timestamp"] == ts]
-    return time_df, ts
+
+def _interpolate_slice(df: pd.DataFrame, ts: pd.Timestamp, key_col: str) -> pd.DataFrame:
+    """
+    對每個 key，在「前一筆」與「後一筆」量測之間對數值欄位做線性插值。
+
+    - Timestamp 保留前一筆的實際量測時間（data_as_of 的語意不變）
+    - 類別欄位（Lane_Status 等）沿用前一筆，不做混合
+    - 沒有後一筆（已到資料集尾端）→ 等同 as-of
+    - 額外提供 Interp_Weight 欄位（0=剛好落在量測點，趨近 1=接近下一筆）
+    """
+    prev = _asof_rows(df, ts, key_col).set_index(key_col)
+
+    future = df[df["Timestamp"] > ts]
+    if future.empty:
+        prev["Interp_Weight"] = 0.0
+        return prev.reset_index()
+
+    nxt = future.loc[sorted(future.groupby(key_col)["Timestamp"].idxmin())].set_index(key_col)
+    aligned = nxt.reindex(prev.index)
+
+    span = (aligned["Timestamp"] - prev["Timestamp"]).dt.total_seconds()
+    weight = ((ts - prev["Timestamp"]).dt.total_seconds() / span).clip(0.0, 1.0)
+    weight = weight.where(span > 0).fillna(0.0)
+
+    out = prev.copy()
+    for col in prev.columns:
+        if col in NON_INTERPOLATED or not pd.api.types.is_numeric_dtype(prev[col]):
+            continue
+        delta = (aligned[col] - prev[col]).fillna(0.0)
+        out[col] = prev[col] + delta * weight
+
+    out["Interp_Weight"] = weight.round(4)
+    return out.reset_index()
+
+
+def _get_time_slice(
+    df: pd.DataFrame,
+    timestamp: str | None = None,
+    key_col: str | None = None,
+) -> tuple[pd.DataFrame, pd.Timestamp]:
+    """
+    取得查詢時間當下的資料切片。
+
+    timestamp 為空時交由模擬時鐘決定當下時間 (backend/sim_clock.py)。
+    回傳 (切片, 查詢時間)；查詢時間是模擬時鐘的當下時間，不一定是資料時間點。
+    """
+    ts = sim_clock.resolve(timestamp)
+    if df is None or df.empty:
+        return df, ts
+
+    mode = _data_mode()
+
+    if key_col and key_col in df.columns:
+        if mode == "interpolate":
+            return _interpolate_slice(df, ts, key_col), ts
+        if mode == "asof":
+            return _asof_rows(df, ts, key_col), ts
+
+    past = df[df["Timestamp"] <= ts]
+    if past.empty:
+        # 查詢時間早於資料集起點 → 退回最早一筆，避免回傳空資料
+        past = df[df["Timestamp"] == df["Timestamp"].min()]
+    return past[past["Timestamp"] == past["Timestamp"].max()], ts
+
+
+def data_as_of(time_df: pd.DataFrame) -> str | None:
+    """切片中最新的資料時間點 (可能早於查詢時間)。"""
+    if time_df is None or time_df.empty:
+        return None
+    return pd.Timestamp(time_df["Timestamp"].max()).strftime(sim_clock.TIME_FMT)
 
 
 def calculate_optimal_route(incident_segment_id: str, timestamp: str | None = None) -> dict:
@@ -93,7 +206,7 @@ def calculate_optimal_route(incident_segment_id: str, timestamp: str | None = No
     intersections = incident_info["intersections"]  # 上游→下游排序
     segment_map = {s["segment_id"]: s for s in road_network}
 
-    time_df, ts = _get_time_slice(traffic_df, timestamp)
+    time_df, ts = _get_time_slice(traffic_df, timestamp, key_col="Segment_ID")
 
     # 為每個 alternative 計算資訊
     all_candidates = []
@@ -177,7 +290,8 @@ def calculate_optimal_route(incident_segment_id: str, timestamp: str | None = No
     return {
         "incident_segment_id": incident_segment_id,
         "incident_name": incident_info["name"],
-        "query_timestamp": ts.strftime("%Y-%m-%d %H:%M"),
+        "query_timestamp": ts.strftime(sim_clock.TIME_FMT),
+        "data_as_of": data_as_of(time_df),
         "primary_route": primary,
         "selection_reason": selection_reason,
         "congestion_note": congestion_note,
@@ -203,7 +317,7 @@ def calculate_ete(severity: str, affected_segment_ids: list[str], timestamp: str
 
     base_clearance = base_map[severity_normalized]
     traffic_df = _load_traffic_flow()
-    time_df, ts = _get_time_slice(traffic_df, timestamp)
+    time_df, ts = _get_time_slice(traffic_df, timestamp, key_col="Segment_ID")
 
     affected_df = time_df[time_df["Segment_ID"].isin(affected_segment_ids)]
     avg_saturation = float(affected_df["Saturation_Score"].mean()) if not affected_df.empty else 0.5
@@ -220,7 +334,8 @@ def calculate_ete(severity: str, affected_segment_ids: list[str], timestamp: str
         "congestion_penalty_minutes": congestion_penalty,
         "ete_minutes": ete_minutes,
         "formula": "ETE = base_clearance + max(0, (avg_saturation - 0.5) × 60)",
-        "query_timestamp": ts.strftime("%Y-%m-%d %H:%M"),
+        "query_timestamp": ts.strftime(sim_clock.TIME_FMT),
+        "data_as_of": data_as_of(affected_df),
         "affected_segments_found": len(affected_df),
         "affected_segments_requested": len(affected_segment_ids),
     }
@@ -233,7 +348,7 @@ def check_roaming_rate(bs_id: str, timestamp: str | None = None) -> dict:
     if bs_df.empty:
         return {"error": f"找不到基地台 {bs_id}"}
 
-    time_slice, ts = _get_time_slice(bs_df, timestamp)
+    time_slice, ts = _get_time_slice(bs_df, timestamp, key_col="BS_ID")
     if time_slice.empty:
         return {"error": f"基地台 {bs_id} 在指定時間無資料"}
 
@@ -251,5 +366,6 @@ def check_roaming_rate(bs_id: str, timestamp: str | None = None) -> dict:
         "roaming_user_pct_display": f"{roaming_pct * 100:.1f}%",
         "trigger_sop6_multilingual": roaming_pct >= 0.30,
         "user_count": int(record["User_Count"]),
-        "query_timestamp": pd.Timestamp(ts).strftime("%Y-%m-%d %H:%M"),
+        "query_timestamp": pd.Timestamp(ts).strftime(sim_clock.TIME_FMT),
+        "data_as_of": data_as_of(time_slice),
     }

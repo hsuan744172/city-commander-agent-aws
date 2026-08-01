@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from backend import sim_clock
 from backend.agents.comms import run_comms
 from backend.agents.policy import run_assessment
 from backend.agents.router import run_routing
@@ -37,21 +38,16 @@ def _load_incidents(event: dict | None = None) -> list[dict]:
 
 
 def _load_traffic_data(timestamp: str | None = None) -> dict:
+    """
+    截至查詢時間的路網狀態。timestamp 為空時由模擬時鐘決定當下時間。
+    切片邏輯統一交給 traffic_math._get_time_slice，避免多份重複實作。
+    """
     if not TRAFFIC_FLOW_CSV.exists():
         return {}
-    df = pd.read_csv(TRAFFIC_FLOW_CSV, parse_dates=["Timestamp"])
-    # 統一處理可能帶 % 的飽和度欄位
-    def _pct(v):
-        s = str(v).replace("%", "").strip()
-        f = float(s)
-        return f / 100 if f > 1 else f
-    df["Saturation_Score"] = df["Saturation_Score"].apply(_pct)
 
-    ts = pd.Timestamp(timestamp) if timestamp else df["Timestamp"].max()
-    time_df = df[df["Timestamp"] == ts]
-    if time_df.empty:
-        idx = (df["Timestamp"] - ts).abs().argsort().iloc[0]
-        time_df = df.iloc[[idx]]
+    from backend.agents.traffic_math import _get_time_slice, _load_traffic_flow
+
+    time_df, _ = _get_time_slice(_load_traffic_flow(), timestamp, key_col="Segment_ID")
 
     result = {}
     for _, row in time_df.iterrows():
@@ -61,30 +57,24 @@ def _load_traffic_data(timestamp: str | None = None) -> dict:
             "avg_speed": float(row["Avg_Speed"]),
             "vehicle_count": int(row["Vehicle_Count"]),
             "lane_status": row["Lane_Status"],
+            "data_as_of": pd.Timestamp(row["Timestamp"]).strftime(sim_clock.TIME_FMT),
         }
     return result
 
 
 def _load_crowd_data(bs_id: str, timestamp: str | None = None) -> dict | None:
+    """截至查詢時間、該基地台的最新一筆人流資料。"""
     if not CROWD_DENSITY_CSV.exists():
         return None
-    df = pd.read_csv(CROWD_DENSITY_CSV, parse_dates=["Timestamp"])
-    # 統一處理 % 字串
-    def _pct(v):
-        s = str(v).replace("%", "").strip()
-        f = float(s)
-        return f / 100 if f > 1 else f
-    df["Roaming_User_Pct"] = df["Roaming_User_Pct"].apply(_pct)
 
+    from backend.agents.traffic_math import _get_time_slice, _load_crowd_density
+
+    df = _load_crowd_density()
     bs_df = df[df["BS_ID"] == bs_id]
     if bs_df.empty:
         return None
 
-    ts = pd.Timestamp(timestamp) if timestamp else bs_df["Timestamp"].max()
-    row = bs_df[bs_df["Timestamp"] == ts]
-    if row.empty:
-        idx = (bs_df["Timestamp"] - ts).abs().argsort().iloc[0]
-        row = bs_df.iloc[[idx]]
+    row, _ = _get_time_slice(bs_df, timestamp, key_col="BS_ID")
     if row.empty:
         return None
 
@@ -94,7 +84,13 @@ def _load_crowd_data(bs_id: str, timestamp: str | None = None) -> dict | None:
         growth_val = float(growth_val.replace("%", "").strip())
     else:
         growth_val = float(growth_val)
-    return {"bs_id": bs_id, "user_count": int(r["User_Count"]), "growth_rate": growth_val, "roaming_user_pct": float(r["Roaming_User_Pct"])}
+    return {
+        "bs_id": bs_id,
+        "user_count": int(r["User_Count"]),
+        "growth_rate": growth_val,
+        "roaming_user_pct": float(r["Roaming_User_Pct"]),
+        "data_as_of": pd.Timestamp(r["Timestamp"]).strftime(sim_clock.TIME_FMT),
+    }
 
 
 def _get_nearby_stations(segment_id: str) -> list[str]:
@@ -122,7 +118,8 @@ def _process_incident(incident: dict) -> dict:
         return {"event_id": "UNKNOWN", "error": "Invalid incident", "status": "failed"}
 
     event_id = incident.get("event_id") or "UNKNOWN"
-    timestamp = incident.get("timestamp") or ""
+    # 事件未帶時間 → 視為「當下」發生，交由模擬時鐘決定
+    timestamp = sim_clock.resolve(incident.get("timestamp")).strftime(sim_clock.TIME_FMT)
     affected_segment = incident.get("affected_segment") or ""
     event_type = incident.get("type") or ""
 
@@ -439,7 +436,9 @@ def _assemble_advisory(incident, policy_result, routing_result, comms_result, ti
 
     return {
         "advisory_type": "交控中心建議書",
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        # generated_at 走模擬時鐘（建議書的情境時間），real_generated_at 才是實際產出時間
+        "generated_at": sim_clock.now_str(),
+        "real_generated_at": datetime.now().strftime(sim_clock.TIME_FMT),
         "event_id": event_id,
         "event_timestamp": timestamp,
         "event_identification": {
@@ -472,34 +471,50 @@ def _assemble_advisory(incident, policy_result, routing_result, comms_result, ti
     }
 
 
-def run_commander(event: dict | None = None, session_id: str = "") -> dict:
-    """總指揮主流程。"""
-    incidents = _load_incidents(event)
-    if not incidents:
-        return {"status": "no_incidents", "message": "無事件需要處理", "advisories": []}
+def run_commander(event: dict | None = None, session_id: str = "", sim_time: str | None = None) -> dict:
+    """
+    總指揮主流程。
 
-    advisories = []
-    for incident in incidents:
-        if not incident or not isinstance(incident, dict):
-            advisories.append({"event_id": "UNKNOWN", "error": "Invalid incident", "status": "failed"})
-            continue
-        try:
-            advisories.append(_process_incident(incident))
-        except Exception as e:
-            import traceback
-            advisories.append({"event_id": incident.get("event_id", "?"), "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc(), "status": "failed"})
+    sim_time：本次執行要套用的模擬時間（不影響全域時鐘）。
+              也可放在 event["sim_time"]。留空則使用當下模擬時間。
+    """
+    requested_time = sim_time or (event or {}).get("sim_time")
 
-    return {
-        "status": "completed",
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "total_incidents": len(incidents),
-        "processed": len([a for a in advisories if "error" not in a]),
-        "failed": len([a for a in advisories if "error" in a]),
-        "advisories": advisories,
-    }
+    with sim_clock.override(requested_time):
+        incidents = _load_incidents(event)
+        if not incidents:
+            return {
+                "status": "no_incidents",
+                "message": "無事件需要處理",
+                "sim_time": sim_clock.now_str(),
+                "advisories": [],
+            }
+
+        advisories = []
+        for incident in incidents:
+            if not incident or not isinstance(incident, dict):
+                advisories.append({"event_id": "UNKNOWN", "error": "Invalid incident", "status": "failed"})
+                continue
+            try:
+                advisories.append(_process_incident(incident))
+            except Exception as e:
+                import traceback
+                advisories.append({"event_id": incident.get("event_id", "?"), "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc(), "status": "failed"})
+
+        return {
+            "status": "completed",
+            "generated_at": sim_clock.now_str(),
+            "real_generated_at": datetime.now().strftime(sim_clock.TIME_FMT),
+            "sim_time": sim_clock.now_str(),
+            "clock": sim_clock.state(),
+            "total_incidents": len(incidents),
+            "processed": len([a for a in advisories if "error" not in a]),
+            "failed": len([a for a in advisories if "error" in a]),
+            "advisories": advisories,
+        }
 
 
-def run_what_if(prompt: str, session_id: str = "") -> dict:
+def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) -> dict:
     """
     What-if 情境問答 — 支援 Bedrock 或 Gemini。
 
@@ -519,8 +534,10 @@ def run_what_if(prompt: str, session_id: str = "") -> dict:
     sop_data = read_traffic_sop()
     sop_text = sop_data.get("sop_text", "")[:3000]
 
-    # 讀取當前路網狀態
-    traffic_data = _load_traffic_data()
+    # 讀取「當下模擬時間」的路網狀態（未來資料不會外洩給 LLM）
+    with sim_clock.override(sim_time):
+        current_time = sim_clock.now_str()
+        traffic_data = _load_traffic_data()
     traffic_summary = json.dumps(traffic_data, ensure_ascii=False)[:2000]
 
     system_prompt = f"""你是「城市應變指揮官」，台北市交控中心的 AI 決策顧問。
@@ -544,14 +561,21 @@ def run_what_if(prompt: str, session_id: str = "") -> dict:
 交通應變標準程序：
 {sop_text}
 
+現在時間：{current_time}
+（以下路網狀態即為此刻的即時數據；你不知道此時間之後會發生什麼事，
+  回答時一律以「現在時間」為基準，不得推測或引用未來時間的數據。）
+
 當前路網狀態：
 {traffic_summary}
 """
 
     if provider == "gemini":
-        return _call_gemini(prompt, system_prompt, session_id)
+        result = _call_gemini(prompt, system_prompt, session_id)
     else:
-        return _call_bedrock(prompt, system_prompt, session_id)
+        result = _call_bedrock(prompt, system_prompt, session_id)
+
+    result["sim_time"] = current_time
+    return result
 
 
 def _call_gemini(prompt: str, system_prompt: str, session_id: str) -> dict:

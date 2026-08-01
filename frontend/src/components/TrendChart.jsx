@@ -34,15 +34,24 @@ function CustomTooltip({ active, payload, label }) {
   );
 }
 
-export default function TrendChart({ selectedSegments, onRemove }) {
+export default function TrendChart({ selectedSegments, onRemove, simTime }) {
   const [allData, setAllData] = useState([]);
 
+  // 後端只回傳「截至當下模擬時間」的資料，因此時間一推進就要重抓
   useEffect(() => {
+    let cancelled = false;
     fetch("/api/trend")
       .then((r) => r.json())
-      .then((d) => setAllData(d.data || []))
-      .catch(() => setAllData([]));
-  }, []);
+      .then((d) => {
+        if (!cancelled) setAllData(d.data || []);
+      })
+      .catch(() => {
+        if (!cancelled) setAllData([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [simTime]);
 
   const hasSelection = selectedSegments?.length > 0;
 
