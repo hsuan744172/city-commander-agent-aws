@@ -136,31 +136,132 @@ function saturationToColor(score) {
 }
 
 /**
- * 將後端 segments 資料轉換為 GeoJSON FeatureCollection
+ * 沿 LineString 插值取得某個進度 (0~1) 的座標點
+ */
+function interpolateAlongLine(coords, t) {
+  if (!coords || coords.length < 2) return null;
+  if (t <= 0) return coords[0];
+  if (t >= 1) return coords[coords.length - 1];
+
+  let totalLen = 0;
+  const segLens = [];
+  for (let i = 1; i < coords.length; i++) {
+    const dx = coords[i][0] - coords[i - 1][0];
+    const dy = coords[i][1] - coords[i - 1][1];
+    const len = Math.sqrt(dx * dx + dy * dy);
+    segLens.push(len);
+    totalLen += len;
+  }
+  if (totalLen === 0) return coords[0];
+
+  const targetDist = t * totalLen;
+  let accumulated = 0;
+  for (let i = 0; i < segLens.length; i++) {
+    if (accumulated + segLens[i] >= targetDist) {
+      const ratio = (targetDist - accumulated) / segLens[i];
+      return [
+        coords[i][0] + ratio * (coords[i + 1][0] - coords[i][0]),
+        coords[i][1] + ratio * (coords[i + 1][1] - coords[i][1]),
+      ];
+    }
+    accumulated += segLens[i];
+  }
+  return coords[coords.length - 1];
+}
+
+/**
+ * 將一條 LineString 座標往垂直方向偏移 offsetMeters 公尺
+ * 正值偏左（面對行進方向），負值偏右
+ */
+function offsetLineCoords(coords, offsetMeters) {
+  if (!coords || coords.length < 2) return coords;
+  const offsetDeg = offsetMeters / 111320; // 粗略：1度 ≈ 111320m
+  const result = [];
+
+  for (let i = 0; i < coords.length; i++) {
+    let nx = 0, ny = 0;
+
+    if (i === 0) {
+      // 第一個點：用第一段的法線
+      const dx = coords[1][0] - coords[0][0];
+      const dy = coords[1][1] - coords[0][1];
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      nx = -dy / len;
+      ny = dx / len;
+    } else if (i === coords.length - 1) {
+      // 最後一個點：用最後一段的法線
+      const dx = coords[i][0] - coords[i - 1][0];
+      const dy = coords[i][1] - coords[i - 1][1];
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      nx = -dy / len;
+      ny = dx / len;
+    } else {
+      // 中間點：前後兩段法線平均
+      const dx1 = coords[i][0] - coords[i - 1][0];
+      const dy1 = coords[i][1] - coords[i - 1][1];
+      const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1) || 1;
+      const dx2 = coords[i + 1][0] - coords[i][0];
+      const dy2 = coords[i + 1][1] - coords[i][1];
+      const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
+      nx = (-dy1 / len1 + -dy2 / len2) / 2;
+      ny = (dx1 / len1 + dx2 / len2) / 2;
+      const nlen = Math.sqrt(nx * nx + ny * ny) || 1;
+      nx /= nlen;
+      ny /= nlen;
+    }
+
+    result.push([
+      coords[i][0] + nx * offsetDeg,
+      coords[i][1] + ny * offsetDeg,
+    ]);
+  }
+  return result;
+}
+
+// 預計算每條路段的正向/反向偏移座標（偏移約 5 公尺）
+const OFFSET_METERS = 5;
+const SEGMENT_COORDS_FWD = {};
+const SEGMENT_COORDS_REV = {};
+for (const [id, coords] of Object.entries(SEGMENT_COORDS)) {
+  SEGMENT_COORDS_FWD[id] = offsetLineCoords(coords, OFFSET_METERS);
+  SEGMENT_COORDS_REV[id] = offsetLineCoords([...coords].reverse(), -OFFSET_METERS);
+}
+
+/**
+ * 將後端 segments 資料轉換為雙向道路 GeoJSON
+ * 使用預計算的偏移座標（不依賴 line-offset）
  */
 function buildRoadGeoJSON(segments, selectedId = null) {
   const features = [];
   for (const seg of segments) {
-    const coords = SEGMENT_COORDS[seg.segment_id];
-    if (!coords) continue;
+    const fwdCoords = SEGMENT_COORDS_FWD[seg.segment_id];
+    const revCoords = SEGMENT_COORDS_REV[seg.segment_id];
+    if (!fwdCoords) continue;
+    const props = {
+      segment_id: seg.segment_id,
+      road_name: seg.road_name,
+      saturation_score: seg.saturation_score,
+      avg_speed: seg.avg_speed,
+      vehicle_count: seg.vehicle_count,
+      level: seg.level,
+      lane_status: seg.lane_status,
+      color: saturationToColor(seg.saturation_score),
+      selected: seg.segment_id === selectedId ? 1 : 0,
+    };
+    // 正向
     features.push({
       type: "Feature",
-      properties: {
-        segment_id: seg.segment_id,
-        road_name: seg.road_name,
-        saturation_score: seg.saturation_score,
-        avg_speed: seg.avg_speed,
-        vehicle_count: seg.vehicle_count,
-        level: seg.level,
-        lane_status: seg.lane_status,
-        color: saturationToColor(seg.saturation_score),
-        selected: seg.segment_id === selectedId ? 1 : 0,
-      },
-      geometry: {
-        type: "LineString",
-        coordinates: coords,
-      },
+      properties: { ...props, direction: "forward" },
+      geometry: { type: "LineString", coordinates: fwdCoords },
     });
+    // 反向
+    if (revCoords) {
+      features.push({
+        type: "Feature",
+        properties: { ...props, direction: "reverse" },
+        geometry: { type: "LineString", coordinates: revCoords },
+      });
+    }
   }
   return { type: "FeatureCollection", features };
 }
@@ -213,6 +314,28 @@ export default function CityMap3D({
         }
       }
 
+      // 隱藏底圖所有 symbol 圖層（POI、路名、門牌）
+      for (const layer of layers) {
+        if (layer.type === "symbol") {
+          map.setLayoutProperty(layer.id, "visibility", "none");
+        }
+        // 隱藏底圖自帶的 3D 建築圖層（避免與我們的建築重疊）
+        if (layer.type === "fill-extrusion") {
+          map.setLayoutProperty(layer.id, "visibility", "none");
+        }
+        // 隱藏底圖道路線
+        if (layer.type === "line") {
+          map.setLayoutProperty(layer.id, "visibility", "none");
+        }
+        // 把底圖的 fill 圖層（地面色塊）改成深色
+        if (layer.type === "fill") {
+          map.setPaintProperty(layer.id, "fill-color", "#121218");
+        }
+      }
+
+      // 設定地圖背景為深色
+      map.setPaintProperty("background", "background-color", "#0d0d12");
+
       map.addSource("openfreemap", {
         url: "https://tiles.openfreemap.org/planet",
         type: "vector",
@@ -231,10 +354,10 @@ export default function CityMap3D({
               "interpolate",
               ["linear"],
               ["get", "render_height"],
-              0, "#e0e0e0",
-              50, "#c0c8d4",
-              150, "#8fa4bd",
-              300, "#6b8cae",
+              0, "#2c2c34",
+              30, "#33333b",
+              80, "#3a3a44",
+              200, "#44444e",
             ],
             "fill-extrusion-height": [
               "interpolate",
@@ -243,8 +366,7 @@ export default function CityMap3D({
               14, 0,
               15.5, ["get", "render_height"],
             ],
-            "fill-extrusion-base": ["get", "render_min_height"],
-            "fill-extrusion-opacity": 0.75,
+            "fill-extrusion-base": 0,
           },
         },
         labelLayerId
@@ -272,20 +394,21 @@ export default function CityMap3D({
         },
       });
 
-      // 路線外框（深色邊框增加深度感）
+      // 路線外層發光（最寬、最模糊、最淡）
       map.addLayer({
-        id: "traffic-roads-outline",
+        id: "traffic-roads-glow-outer",
         type: "line",
         source: "traffic-roads",
         paint: {
-          "line-color": "rgba(0,0,0,0.4)",
+          "line-color": ["get", "color"],
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
-            13, 5,
-            16, 12,
-            18, 20,
+            13, 8,
+            16, 15,
+            18, 25,
           ],
-          "line-blur": 1,
+          "line-blur": 8,
+          "line-opacity": 0.2,
         },
         layout: {
           "line-cap": "round",
@@ -293,7 +416,29 @@ export default function CityMap3D({
         },
       });
 
-      // 單選路段的額外粗外框（紫色不與飽和度色階衝突）
+      // 路線中層發光（中寬、中模糊）
+      map.addLayer({
+        id: "traffic-roads-glow-inner",
+        type: "line",
+        source: "traffic-roads",
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": [
+            "interpolate", ["linear"], ["zoom"],
+            13, 4,
+            16, 8,
+            18, 13,
+          ],
+          "line-blur": 4,
+          "line-opacity": 0.4,
+        },
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+        },
+      });
+
+      // 單選路段的額外粗外框
       map.addLayer({
         id: "traffic-roads-selected-outline",
         type: "line",
@@ -303,9 +448,9 @@ export default function CityMap3D({
           "line-color": "#BA56DE",
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
-            13, 10,
-            16, 18,
-            18, 28,
+            13, 6,
+            16, 10,
+            18, 16,
           ],
           "line-blur": 2,
           "line-opacity": 0.5,
@@ -316,24 +461,48 @@ export default function CityMap3D({
         },
       });
 
-      // 路線主體（顏色依飽和度）
+      // 路線核心亮線（細、清晰）
       map.addLayer({
         id: "traffic-roads-fill",
         type: "line",
         source: "traffic-roads",
         paint: {
-          "line-color": ["get", "color"],
+          "line-color": "#ffffff",
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
-            13, 3,
-            16, 8,
-            18, 15,
+            13, 0.8,
+            16, 1.5,
+            18, 2.5,
           ],
           "line-blur": 0,
+          "line-opacity": 0.8,
         },
         layout: {
           "line-cap": "round",
           "line-join": "round",
+        },
+      });
+
+      // --- 動態光點（沿路移動） ---
+      map.addSource("traffic-dots", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      map.addLayer({
+        id: "traffic-dots-layer",
+        type: "circle",
+        source: "traffic-dots",
+        paint: {
+          "circle-radius": [
+            "interpolate", ["linear"], ["zoom"],
+            13, 1.5,
+            16, 3,
+            18, 5,
+          ],
+          "circle-color": "#ffffff",
+          "circle-blur": 0.3,
+          "circle-opacity": 0.9,
         },
       });
 
@@ -363,6 +532,19 @@ export default function CityMap3D({
       map.addSource("stations", {
         type: "geojson",
         data: buildStationGeoJSON(),
+      });
+
+      // 站點光暈（大半徑模糊圓，模擬照亮附近建築）
+      map.addLayer({
+        id: "stations-glow",
+        type: "circle",
+        source: "stations",
+        paint: {
+          "circle-radius": 60,
+          "circle-color": ["get", "fill_color"],
+          "circle-blur": 1,
+          "circle-opacity": 0.15,
+        },
       });
 
       // 站點圓圈（固定紫色，收到資料後由 useEffect 更新）
@@ -522,6 +704,51 @@ export default function CityMap3D({
     const geojson = buildRoadGeoJSON(segments, selectedSegmentId);
     source.setData(geojson);
   }, [segments, selectedSegmentId, mapLoaded]);
+
+  // 動態光點動畫：沿路段移動的小光點
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current || segments.length === 0) return;
+    const map = mapRef.current;
+    let animId;
+    const DOTS_PER_ROAD = 3;
+
+    const animate = () => {
+      const now = performance.now();
+      const dotSource = map.getSource("traffic-dots");
+      if (!dotSource) { animId = requestAnimationFrame(animate); return; }
+
+      const features = [];
+      for (const seg of segments) {
+        const fwdCoords = SEGMENT_COORDS_FWD[seg.segment_id];
+        const revCoords = SEGMENT_COORDS_REV[seg.segment_id];
+        if (!fwdCoords || fwdCoords.length < 2) continue;
+
+        const speed = Math.max(seg.avg_speed || 20, 5) / 50;
+        for (let d = 0; d < DOTS_PER_ROAD; d++) {
+          // 正向點（用正向偏移座標）
+          const tFwd = ((now * speed * 0.0001) + (d / DOTS_PER_ROAD)) % 1;
+          const ptFwd = interpolateAlongLine(fwdCoords, tFwd);
+          if (ptFwd) {
+            features.push({ type: "Feature", geometry: { type: "Point", coordinates: ptFwd }, properties: {} });
+          }
+          // 反向點（用反向偏移座標）
+          if (revCoords && revCoords.length >= 2) {
+            const tRev = ((now * speed * 0.00008) + (d / DOTS_PER_ROAD) + 0.5) % 1;
+            const ptRev = interpolateAlongLine(revCoords, tRev);
+            if (ptRev) {
+              features.push({ type: "Feature", geometry: { type: "Point", coordinates: ptRev }, properties: {} });
+            }
+          }
+        }
+      }
+
+      dotSource.setData({ type: "FeatureCollection", features });
+      animId = requestAnimationFrame(animate);
+    };
+
+    animId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animId);
+  }, [segments, mapLoaded]);
 
   // 當 stations 資料更新時，更新站點圖層
   useEffect(() => {
