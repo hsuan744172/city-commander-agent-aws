@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { Shield, BarChart3, FileText, Bot } from "lucide-react";
+import { Shield, BarChart3, FileText, Bot, Siren } from "lucide-react";
 import { cn } from "./lib/utils";
 import DashboardTab from "./components/DashboardTab";
 import IncidentTab from "./components/IncidentTab";
+import InjectionTab from "./components/InjectionTab";
 import ChatTab from "./components/ChatTab";
 
 const TABS = [
   { id: "dashboard", label: "即時儀表板", icon: BarChart3 },
+  { id: "injection", label: "事件注入", icon: Siren },
   { id: "incidents", label: "事件處置與建議書", icon: FileText },
   { id: "chat", label: "AI 策略顧問", icon: Bot },
 ];
@@ -15,11 +17,20 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   // 儀表板點擊路段/小卡後要在建議書頁聚焦的路段
   const [focusSegmentId, setFocusSegmentId] = useState(null);
+  // 最近一次注入產出的建議書；事件處置頁以此為主要來源
+  const [injectedReport, setInjectedReport] = useState(null);
 
   // 從儀表板跳往「事件處置與建議書」並帶上該路段
   const inspectSegment = (segment) => {
     if (!segment?.segment_id) return;
     setFocusSegmentId(segment.segment_id);
+    setActiveTab("incidents");
+  };
+
+  // 注入完成後直接把建議書帶到事件處置頁
+  const showInjectedReport = (report) => {
+    setInjectedReport(report || null);
+    setFocusSegmentId(null);
     setActiveTab("incidents");
   };
 
@@ -63,11 +74,14 @@ export default function App() {
       {/* Tab Content */}
       <main className="flex-1 p-4 max-w-[1600px] mx-auto w-full">
         {activeTab === "dashboard" && <DashboardTab onInspectSegment={inspectSegment} />}
+        {activeTab === "injection" && <InjectionTab onInjected={showInjectedReport} />}
         {activeTab === "incidents" && (
           <IncidentTab
+            report={injectedReport}
             focusSegmentId={focusSegmentId}
             onClearFocus={() => setFocusSegmentId(null)}
             onBackToDashboard={() => setActiveTab("dashboard")}
+            onOpenInjection={() => setActiveTab("injection")}
           />
         )}
         {activeTab === "chat" && <ChatTab />}
