@@ -124,38 +124,15 @@ function buildStationGeoJSON(stations = []) {
 }
 
 /**
- * 飽和度 → 顏色漸變
- * 0.0~0.5: 綠色 (暢通)
- * 0.5~0.7: 黃色 (略擁擠)
- * 0.7~0.85: 橘色 (壅擠)
- * 0.85~1.0: 紅色 (癱瘓)
+ * 飽和度 → 顏色（與即時路網監測一致）
+ * A 級 (≥ 0.95): 紅色 --status-error
+ * B 級 (≥ 0.85): 橘黃 --status-warning
+ * Normal (< 0.85): 綠色 --status-success
  */
 function saturationToColor(score) {
-  if (score <= 0.5) {
-    const t = score / 0.5;
-    const r = Math.round(34 + t * (180 - 34));
-    const g = Math.round(197 + t * (200 - 197));
-    const b = Math.round(94 - t * 60);
-    return `rgb(${r},${g},${b})`;
-  } else if (score <= 0.7) {
-    const t = (score - 0.5) / 0.2;
-    const r = Math.round(180 + t * (245 - 180));
-    const g = Math.round(200 - t * (200 - 158));
-    const b = Math.round(34 - t * 23);
-    return `rgb(${r},${g},${b})`;
-  } else if (score <= 0.85) {
-    const t = (score - 0.7) / 0.15;
-    const r = Math.round(245 + t * (234 - 245));
-    const g = Math.round(158 - t * (158 - 67));
-    const b = Math.round(11 + t * (53 - 11));
-    return `rgb(${r},${g},${b})`;
-  } else {
-    const t = Math.min((score - 0.85) / 0.15, 1);
-    const r = Math.round(234 - t * (234 - 185));
-    const g = Math.round(67 - t * (67 - 28));
-    const b = Math.round(53 - t * (53 - 28));
-    return `rgb(${r},${g},${b})`;
-  }
+  if (score >= 0.95) return "#D94F4F";
+  if (score >= 0.85) return "#C8922A";
+  return "#3A9E74";
 }
 
 /**
@@ -556,15 +533,10 @@ export default function CityMap3D({ segments = [], stations = [], selectedSegmen
       {/* 圖例 */}
       <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-md text-xs z-10">
         <div className="font-semibold text-gray-700 mb-1.5">路段飽和度</div>
-        <div className="flex items-center gap-1">
-          <div className="w-20 h-3 rounded-sm" style={{
-            background: "linear-gradient(to right, #22c55e, #b4cc22, #f59e0b, #ea4335, #b91c1c)"
-          }} />
-        </div>
-        <div className="flex justify-between text-[10px] text-gray-500 mt-0.5">
-          <span>0%</span>
-          <span>50%</span>
-          <span>100%</span>
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full" style={{ background: "#3A9E74" }} />正常</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full" style={{ background: "#C8922A" }} />壅擠</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full" style={{ background: "#D94F4F" }} />癱瘓</span>
         </div>
       </div>
     </div>
