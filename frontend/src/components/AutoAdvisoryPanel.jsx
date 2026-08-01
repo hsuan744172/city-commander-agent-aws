@@ -121,13 +121,14 @@ export default function AutoAdvisoryPanel({ advisories, monitoredAlerts, onInspe
             )}
 
             {/* 警力淨空路口：SOP 第 1 條明列，原本完全沒有輸出 */}
-            {adv.police_dispatch?.officers > 0 && (
+            {adv.police_dispatch?.instruction && (
               <div className="flex items-start gap-1.5 text-xs">
                 <Users className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--status-info)]" />
                 <span className="text-[var(--muted-foreground)]">
-                  {adv.police_dispatch.instruction}，共{" "}
-                  {adv.police_dispatch.officers} 名警力（每路口{" "}
-                  {adv.police_dispatch.per_intersection} 人）
+                  {adv.police_dispatch.instruction}
+                  {adv.police_dispatch.staffing_note && (
+                    <span className="block mt-0.5">{adv.police_dispatch.staffing_note}</span>
+                  )}
                 </span>
               </div>
             )}

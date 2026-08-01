@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -607,13 +608,12 @@ def build_signal_plan(
         "police_dispatch": (
             {
                 "intersections": intersections,
-                "officers": sop_rules.police_required(len(intersections)),
-                "per_intersection": sop_rules.SOP5_POLICE_PER_INTERSECTION,
                 "instruction": (
                     f"調度警力淨空 {'、'.join(intersections)} 等 {len(intersections)} 處路口"
                     if intersections
                     else "該路段無相交路口資料，警力配置待現場回報"
                 ),
+                "staffing_note": "SOP 第 1 條未規定警力人數，不得自行估算",
             }
             if scope == SIGNAL_SCOPE_SOP1
             else None
@@ -903,3 +903,251 @@ def station_reading(bs_id: str, timestamp: str | None = None) -> dict | None:
     payload = _station_record(time_slice.iloc[0])
     payload["query_timestamp"] = pd.Timestamp(ts).strftime(sim_clock.TIME_FMT)
     return payload
+
+
+def evaluate_crowd_scenario(
+    bs_id: str,
+    timestamp: str | None = None,
+    user_count: int | None = None,
+    growth_rate: float | None = None,
+    roaming_user_pct: float | None = None,
+) -> dict:
+    """以當下讀值為基準，套用使用者明示的人流假設並做確定性 SOP 判定。
+
+    未提供的欄位沿用資料集當下讀值，回傳值會明列哪些欄位是假設、哪些欄位沿用，
+    避免 LLM 自行推導人流增幅或漫遊率。所有門檻只取自 sop_rules。
+    """
+    baseline = station_reading(bs_id, timestamp)
+    if not baseline:
+        return {"error": f"查無基地台 {bs_id}", "bs_id": bs_id}
+
+    scenario = {
+        "user_count": int(baseline.get("user_count") or 0),
+        "growth_rate": float(baseline.get("growth_rate") or 0),
+        "roaming_user_pct": float(baseline.get("roaming_user_pct") or 0),
+    }
+    provided: list[str] = []
+    if user_count is not None:
+        scenario["user_count"] = max(0, int(user_count))
+        provided.append("user_count")
+    if growth_rate is not None:
+        scenario["growth_rate"] = float(growth_rate)
+        provided.append("growth_rate")
+    if roaming_user_pct is not None:
+        value = float(roaming_user_pct)
+        # 對外契約一律使用 0~1；拒絕把百分數 30 當成 30 倍。
+        if not 0 <= value <= 1:
+            return {"error": "漫遊率必須使用 0 到 1，例如 30% 請輸入 0.3"}
+        scenario["roaming_user_pct"] = value
+        provided.append("roaming_user_pct")
+
+    checks: list[dict] = []
+    triggered_numbers: list[int] = []
+
+    if bs_id == sop_rules.SOP3_STATION:
+        growth_hit = scenario["growth_rate"] > sop_rules.SOP3_GROWTH_THRESHOLD
+        count_hit = scenario["user_count"] > sop_rules.SOP3_USER_COUNT_THRESHOLD
+        triggered = growth_hit or count_hit
+        reasons = []
+        if growth_hit:
+            reasons.append(
+                f"人流增幅 {scenario['growth_rate']:.0%} 超過 "
+                f"{sop_rules.SOP3_GROWTH_THRESHOLD:.0%}"
+            )
+        if count_hit:
+            reasons.append(
+                f"站內人數 {scenario['user_count']:,} 人超過 "
+                f"{sop_rules.SOP3_USER_COUNT_THRESHOLD:,} 人"
+            )
+        checks.append({
+            "sop_number": 3,
+            "triggered": triggered,
+            "reason": "、".join(reasons) if reasons else "人數與人流增幅均未達門檻",
+            "actions": list(sop_rules.SOP3_ACTIONS) if triggered else [],
+        })
+        if triggered:
+            triggered_numbers.append(3)
+
+    # 多語判定以全資料集掃描為基準；若本情境明示更高漫遊率，再合併該假設。
+    roaming_scan = scan_roaming(timestamp)
+    roaming_triggered = bool(roaming_scan.get("triggered")) or (
+        roaming_user_pct is not None
+        and scenario["roaming_user_pct"] >= sop_rules.SOP6_ROAMING_THRESHOLD
+    )
+    roaming_reason = (
+        "全資料集已有基地台達漫遊率門檻"
+        if roaming_scan.get("triggered")
+        else (
+            f"假設漫遊率 {scenario['roaming_user_pct']:.0%} 已達 "
+            f"{sop_rules.SOP6_ROAMING_THRESHOLD:.0%}"
+            if roaming_triggered
+            else "全資料集與本情境均未達漫遊率門檻"
+        )
+    )
+    checks.append({
+        "sop_number": 6,
+        "triggered": roaming_triggered,
+        "reason": roaming_reason,
+        "languages": list(
+            sop_rules.SOP6_LANGUAGES
+            if roaming_triggered
+            else sop_rules.SOP6_DEFAULT_LANGUAGES
+        ),
+    })
+    if roaming_triggered:
+        triggered_numbers.append(6)
+
+    return {
+        "bs_id": bs_id,
+        "location_name": baseline.get("location_name", bs_id),
+        "query_timestamp": baseline.get("query_timestamp"),
+        "data_as_of": baseline.get("data_as_of"),
+        "baseline": {
+            "user_count": int(baseline.get("user_count") or 0),
+            "growth_rate": float(baseline.get("growth_rate") or 0),
+            "roaming_user_pct": float(baseline.get("roaming_user_pct") or 0),
+        },
+        "scenario": scenario,
+        "provided_hypotheses": provided,
+        "unchanged_from_baseline": [
+            field for field in ("user_count", "growth_rate", "roaming_user_pct")
+            if field not in provided
+        ],
+        "triggered_numbers": triggered_numbers,
+        "checks": checks,
+        "note": "未明示的情境欄位沿用當下資料，不做推測",
+    }
+
+
+def calculate_answer_confidence(
+    *,
+    prompt: str,
+    response: str,
+    current_time: str,
+    model_ok: bool,
+    tools_used: list[str] | None = None,
+    cited_clause_numbers: list[int] | None = None,
+    data_as_of: str | None = None,
+    history_available: bool = False,
+    tool_error: bool = False,
+    tool_truncated: bool = False,
+) -> dict:
+    """依可稽核證據計算 What-if 回覆信心值，禁止交由 LLM 自評。"""
+    if not model_ok:
+        return {
+            "score": 5,
+            "level": "low",
+            "label": "低信心",
+            "evidence_sources": [],
+            "reasons": ["AI 模型或服務未正常回應，無法建立決策證據鏈"],
+        }
+
+    score = 30
+    positive: list[str] = ["AI 模型已正常完成回覆"]
+    concerns: list[str] = []
+    tools = list(dict.fromkeys(tools_used or []))
+    clauses = list(dict.fromkeys(cited_clause_numbers or []))
+    source_map = {
+        "lookup_sop_clause": ("SOP 條文",),
+        "traffic_status": ("即時車流資料",),
+        "crowd_status": ("基地台人流資料", "SOP 條文"),
+        "sop_trigger_status": ("即時車流資料", "基地台人流資料", "SOP 條文"),
+        "evacuation_route": ("即時車流資料", "路網拓樸", "SOP 條文"),
+        "recovery_time": ("即時車流資料", "路網拓樸", "SOP 條文"),
+        "signal_plan": ("即時車流資料", "路網拓樸", "SOP 條文"),
+        "station_detail": ("基地台人流資料",),
+        "network_geometry": ("路網拓樸",),
+    }
+    evidence_sources: list[str] = []
+    for tool_name in tools:
+        for source in source_map.get(tool_name, ("確定性後端資料",)):
+            if source not in evidence_sources:
+                evidence_sources.append(source)
+
+    if data_as_of:
+        score += 20
+        positive.append(f"已對齊資料時間 {data_as_of}")
+
+    if tools:
+        score += 30 + min(5, max(0, len(tools) - 1) * 2)
+        source_text = "、".join(evidence_sources) or "確定性後端資料"
+        positive.append(f"本輪使用 {len(tools)} 項工具核對{source_text}")
+    elif history_available and any(
+        marker in (prompt or "") for marker in ("延續", "上一題", "剛才", "前述", "上述")
+    ):
+        score += 25
+        evidence_sources.append("前輪已驗證證據")
+        positive.append("本輪明確沿用前一輪已驗證的工具證據")
+    else:
+        score -= 20
+        concerns.append("本輪未使用確定性工具，也未明確沿用前輪證據")
+
+    policy_question = any(
+        marker in (prompt or "")
+        for marker in ("SOP", "條款", "觸發", "應變", "措施", "處置", "決策")
+    )
+    if clauses:
+        score += 8
+        if "SOP 條文" not in evidence_sources:
+            evidence_sources.append("SOP 條文")
+        positive.append(f"附有 {len(clauses)} 條 SOP 原文依據")
+    elif policy_question:
+        score -= 10
+        concerns.append("題目涉及應變規則，但回覆未引用 SOP 原文")
+
+    if all(label in (response or "") for label in ("判斷：", "建議：", "行動指令：")):
+        score += 5
+
+    identifiers = set(re.findall(r"\b(?:RD|BS)_[A-Z0-9_]+\b", prompt or ""))
+    unknown_identifiers = []
+    for identifier in sorted(identifiers):
+        if identifier.startswith("RD_") and not segment_info(identifier):
+            unknown_identifiers.append(identifier)
+        elif identifier.startswith("BS_") and station_reading(identifier, current_time) is None:
+            unknown_identifiers.append(identifier)
+    if unknown_identifiers:
+        score -= 30
+        concerns.append("查無題目中的資料實體：" + "、".join(unknown_identifiers))
+
+    future_times = []
+    try:
+        now = pd.Timestamp(current_time)
+        for date_text in re.findall(r"\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?", prompt or ""):
+            parsed = pd.Timestamp(date_text)
+            if parsed > now:
+                future_times.append(date_text)
+    except (TypeError, ValueError):
+        future_times = []
+    if future_times:
+        score -= 30
+        concerns.append("題目要求的時間晚於目前可用資料：" + "、".join(future_times))
+
+    uncertainty_markers = (
+        "查無資料", "無法判定", "無法取得", "資料不足", "不得推測", "無紀錄",
+    )
+    if any(marker in (response or "") for marker in uncertainty_markers):
+        score -= 15
+        concerns.append("回覆明示存在資料缺口或不可推測範圍")
+    if tool_error:
+        score -= 40
+        concerns.append("確定性工具回傳錯誤或查無資料")
+    if tool_truncated:
+        score -= 10
+        concerns.append("工具證據過長而被截斷")
+
+    score = max(5, min(98, int(round(score))))
+    if score >= 85:
+        level, label = "high", "高信心"
+    elif score >= 60:
+        level, label = "medium", "中信心"
+    else:
+        level, label = "low", "低信心"
+
+    reasons = positive[:3] + concerns[:3]
+    return {
+        "score": score,
+        "level": level,
+        "label": label,
+        "evidence_sources": evidence_sources,
+        "reasons": reasons,
+    }

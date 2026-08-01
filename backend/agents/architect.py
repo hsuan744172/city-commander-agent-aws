@@ -250,12 +250,12 @@ def _cross_system_actions(policy_result: dict, routing_result: dict) -> list[dic
             "basis": f"飽和度 {round(float(plan.get('saturation_score') or 0) * 100)}%",
         })
         dispatch = plan.get("police_dispatch") or {}
-        if dispatch.get("officers"):
+        if dispatch.get("instruction"):
             actions.append({
                 "agency": AGENCY_POLICE,
-                "request": f"{dispatch['instruction']}，共 {dispatch['officers']} 名警力",
+                "request": dispatch["instruction"],
                 "sop_reference": "SOP 第 1 條",
-                "basis": f"{plan['road_name']}達 {plan['level_description']}",
+                "basis": f"{plan['road_name']}達 {plan['level_description']}；條文未規定警力人數",
             })
 
     sop6 = checks.get(6) or {}
@@ -554,17 +554,35 @@ def _sanitize_ai_text(response: str) -> str:
     text = response or ""
     for forbidden in ("```", "**", "###", "##", "$", "\\frac", "Saturation_Score", "capacity_vph"):
         text = text.replace(forbidden, "")
+    text = re.sub(r"(?m)^\s*-{3,}\s*$", "", text)
+    # What-if 對外格式只能從「判斷：」開始；模型偶爾會先輸出工具狀態或開場白。
+    decision_at = text.find("判斷：")
+    if decision_at >= 0:
+        text = text[decision_at:]
     return text.strip()
 
 
 def _limit_narrative(text: str) -> str:
-    """
-    上限保護。改成優先在句末截斷，找不到句末才硬切，
-    並在硬切時補上刪節號，避免畫面出現斷在半句的敘述。
-    """
+    """限制長度時保留判斷、建議、行動指令三段，避免尾段被整段截掉。"""
     text = (text or "").strip()
     if len(text) <= NARRATIVE_HARD_LIMIT:
         return text
+
+    labels = ("判斷：", "建議：", "行動指令：")
+    positions = [text.find(label) for label in labels]
+    if all(position >= 0 for position in positions):
+        sections = []
+        budgets = (175, 145, 145)
+        for index, (label, start, budget) in enumerate(zip(labels, positions, budgets)):
+            end = positions[index + 1] if index + 1 < len(labels) else len(text)
+            body = text[start + len(label):end].strip()
+            if len(body) > budget:
+                shortened = body[:budget]
+                boundary = max(shortened.rfind(mark) for mark in ("。", "！", "？", "；"))
+                body = shortened[:boundary + 1].strip() if boundary >= budget // 2 else shortened.rstrip() + "…"
+            sections.append(f"{label}{body}")
+        return "\n\n".join(sections)[:NARRATIVE_HARD_LIMIT].strip()
+
     shortened = text[:NARRATIVE_HARD_LIMIT]
     boundary = max(shortened.rfind(mark) for mark in ("。", "！", "？", "\n"))
     if boundary >= NARRATIVE_CHAR_LIMIT * 0.6:
@@ -1043,13 +1061,16 @@ def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) 
 
 【工具使用】
 你可以呼叫工具取得確定性計算結果，遇到下列問題務必先呼叫工具再回答，不要自行推算：
+- 現在的車速、車流量、飽和度、壅塞或分級，無論單一路段或全路網 → traffic_status
+- 現在的人數、增幅、停留時間或漫遊率 → crowd_status；若還要單站歷史峰值才使用 station_detail
 - 替代路徑、主疏散、為何排除某條路 → evacuation_route
-- 預計恢復時間 ETE → recovery_time
+- 預計恢復時間 ETE → recovery_time；只傳事故路段、嚴重度與事故位置，受影響路段由工具組合
 - 號誌配時或警力需求 → signal_plan
 - 條文原文或條號確認 → lookup_sop_clause
-- 單一基地台人數、增幅、歷史峰值 → station_detail
+- 假設基地台人數、增幅或漫遊率改變 → crowd_status，必須逐項傳入使用者明示值
 - 目前哪些 SOP 條款已觸發 → sop_trigger_status
-- 路段相交關係、容量、分流建議 → network_geometry
+- 路段相交關係、容量、車流方向或分流建議 → network_geometry
+下方知識基礎只供你理解全貌，不能取代本輪工具核對。凡回答車流、人流、路網幾何的當下數值或狀態，必須呼叫上述對應工具，即使知識基礎已出現相同內容也不得直接作答。
 
 【嚴格禁止事項】
 - 禁止輸出任何 LaTeX 數學符號（如 $...$、\\frac 等）
@@ -1059,12 +1080,18 @@ def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) 
 
 【回覆格式要求】
 - 硬性上限 {NARRATIVE_CHAR_LIMIT} 個中文字；只輸出「判斷：」「建議：」「行動指令：」三個純文字短段落
+- 第一個字必須是「判」，不得在「判斷：」前加開場、工具狀態、標題或分隔線
 - 每段最多三句，優先保留可執行指令，禁止重述全部路段明細
 - 時間格式一律 YYYY-MM-DD HH:MM
 - 引用 SOP 時標示條號（例：依據 SOP 第 2 條）
 
 【資料紀律】
 - 只能引用下方 SOP、路網狀態、人流狀態或工具回傳結果，禁止猜測或虛構任何數字、日期與路段
+- 假設情境未明示的欄位一律沿用工具回傳的當下基準值，必須說明沿用，不得聲稱其將上升或下降
+- 禁止自行計算未來恢復時刻、回報時刻、人力數量或其他工具未回傳的衍生數字
+- 禁止在使用者未提出的新情境上再增加「若超過某門檻」等二次假設或額外觸發條件
+- 工具若標示條文未規定人數，只能下達調度或淨空指令，不得補寫每處或總人數
+- ETE 的受影響路段只能採 recovery_time 回傳的「事故路段 + 主疏散 + 次要疏散」，不得自行刪減
 - 所稱目前時間只能使用「現在時間」
 - 未經資料明示，不得自行提出固定回報間隔、號誌調整比例或人力數量
 - 只有忠孝東路四段 (RD_TPE_001) 與光復南路 (RD_TPE_002) 是 SOP 第 1 條的城市應變觸發路段，
@@ -1087,12 +1114,13 @@ def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) 
 目前已由程式判定觸發的 SOP 條款：{triggers['triggered_numbers']}（多語通報：{triggers['multilingual_required']}）
 """
 
+    history = _history(session_id)
     result = _call_bedrock(
         prompt,
         system_prompt,
         session_id,
         tools=build_tools(current_time),
-        messages=_history(session_id),
+        messages=history,
     )
 
     if not result.get("ok"):
@@ -1103,17 +1131,41 @@ def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) 
             "即時路網狀態、事件處置建議書與多語通報均不受影響，仍可正常使用。"
         )
         result["sim_time"] = current_time
+        result["data_as_of"] = traffic_context.get("資料時間")
         result["cited_clauses"] = []
         result["tools_used"] = []
+        result["confidence"] = traffic_math.calculate_answer_confidence(
+            prompt=prompt,
+            response=result["response"],
+            current_time=current_time,
+            model_ok=False,
+            tools_used=[],
+            cited_clause_numbers=[],
+            data_as_of=result.get("data_as_of"),
+        )
+        result.pop("tool_quality", None)
         return result
 
     response = _sanitize_ai_text(result.get("response", ""))
     response = re.sub(r"每\s*(?:\d+|[一二三四五六七八九十]+)\s*分鐘", "持續", response)
-    result["response"] = _limit_narrative(response)
+    final_response = _limit_narrative(response)
+    result["response"] = final_response
     result["sim_time"] = current_time
     result["data_as_of"] = traffic_context.get("資料時間")
-    result["cited_clauses"] = policy.clauses_payload(
-        {int(n) for n in _CLAUSE_MENTION.findall(response)}
+    clause_numbers = sorted({int(n) for n in _CLAUSE_MENTION.findall(final_response)})
+    result["cited_clauses"] = policy.clauses_payload(clause_numbers)
+    tool_quality = result.pop("tool_quality", {})
+    result["confidence"] = traffic_math.calculate_answer_confidence(
+        prompt=prompt,
+        response=final_response,
+        current_time=current_time,
+        model_ok=True,
+        tools_used=result.get("tools_used") or [],
+        cited_clause_numbers=clause_numbers,
+        data_as_of=result.get("data_as_of"),
+        history_available=bool(history),
+        tool_error=bool(tool_quality.get("has_error")),
+        tool_truncated=bool(tool_quality.get("truncated")),
     )
 
     if session_id and result.get("messages"):
@@ -1214,15 +1266,19 @@ def _call_bedrock(
             agent_kwargs["messages"] = list(messages)
 
         agent = Agent(**agent_kwargs)
+        history_length = len(messages or [])
         result = agent(prompt)
+        all_messages = list(getattr(agent, "messages", []) or [])
+        current_messages = all_messages[history_length:]
 
         return {
             "session_id": session_id,
             "prompt": prompt,
             "response": str(result),
             "model": f"bedrock/{settings['model_id']}",
-            "messages": list(getattr(agent, "messages", []) or []),
-            "tools_used": _tool_names_from(getattr(agent, "messages", []) or []),
+            "messages": all_messages,
+            "tools_used": _tool_names_from(current_messages),
+            "tool_quality": _tool_quality_from(current_messages),
             "ok": True,
             "timestamp": datetime.now().strftime(sim_clock.TIME_FMT),
         }
@@ -1247,6 +1303,26 @@ def _tool_names_from(messages: list) -> list[str]:
                 if name and name not in names:
                     names.append(name)
     return names
+
+
+def _tool_quality_from(messages: list) -> dict:
+    """只檢查本輪工具結果是否含錯誤或截斷，不把模型文字當成證據。"""
+    payloads: list[str] = []
+    failed_status = False
+    for message in messages:
+        for block in (message or {}).get("content") or []:
+            if not isinstance(block, dict) or "toolResult" not in block:
+                continue
+            result = block.get("toolResult") or {}
+            if result.get("status") == "error":
+                failed_status = True
+            payloads.append(json.dumps(result, ensure_ascii=False, default=str))
+    text = "\n".join(payloads)
+    error_markers = ('"error"', "查無", "找不到", "無資料", "不支援")
+    return {
+        "has_error": failed_status or any(marker in text for marker in error_markers),
+        "truncated": "...(已截斷)" in text,
+    }
 
 
 def _bedrock_failure(

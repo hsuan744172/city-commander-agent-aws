@@ -42,6 +42,12 @@ SOP3_STATION = "BS_MRT_BL17"          # 捷運國父紀念館站
 SOP3_RELIEF_STATION = "BS_MRT_BL18"   # 引導群眾步行至捷運市政府站
 SOP3_GROWTH_THRESHOLD = 0.30          # Growth_Rate > 0.30
 SOP3_USER_COUNT_THRESHOLD = 25000     # 或 User_Count > 25,000
+SOP3_ACTIONS: tuple[str, ...] = (
+    "建議臺北捷運公司於國父紀念館站啟動過站不停",
+    "通知公車處調度接駁專車疏運",
+    "引導群眾步行至捷運市政府站（BS_MRT_BL18）分流",
+    "協調警力維持站體與出口秩序",
+)
 
 # ---------------------------------------------------------------------------
 # SOP 第 4 條 — 大巨蛋散場啟動

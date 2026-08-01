@@ -58,8 +58,35 @@ def build_tools(timestamp: str) -> list[Callable]:
         return _dump(traffic_math.get_current_traffic_context(ts))
 
     @tool
-    def crowd_status() -> str:
-        """查詢當下全基地台人流狀態：人數、停留時間、人流增幅、漫遊率與是否達 SOP 第 6 條門檻。"""
+    def crowd_status(
+        bs_id: str = "",
+        user_count: int | None = None,
+        growth_rate: float | None = None,
+        roaming_user_pct: float | None = None,
+    ) -> str:
+        """
+        查詢當下全基地台人流；若問題包含假設人數、增幅或漫遊率，必須把使用者明示的
+        值傳入本工具做確定性判定，不得自行推算未提供欄位。
+
+        Args:
+            bs_id: 假設情境的基地台編號；只查全市現況時留空。
+            user_count: 使用者明示的假設人數，未提供則留空。
+            growth_rate: 使用者明示的假設增幅，使用 0~1；未提供則留空。
+            roaming_user_pct: 使用者明示的假設漫遊率，使用 0~1；未提供則留空。
+        """
+        has_scenario = any(
+            value is not None for value in (user_count, growth_rate, roaming_user_pct)
+        )
+        if has_scenario:
+            if not bs_id:
+                return _dump({"error": "假設人流情境必須提供基地台編號"})
+            return _dump(traffic_math.evaluate_crowd_scenario(
+                bs_id,
+                ts,
+                user_count=user_count,
+                growth_rate=growth_rate,
+                roaming_user_pct=roaming_user_pct,
+            ))
         return _dump(traffic_math.get_current_crowd_context(ts))
 
     @tool
@@ -117,16 +144,39 @@ def build_tools(timestamp: str) -> list[Callable]:
         })
 
     @tool
-    def recovery_time(severity: str, segment_ids: str) -> str:
+    def recovery_time(
+        severity: str,
+        incident_segment_id: str,
+        incident_location: str = "",
+    ) -> str:
         """
-        依 SOP 第 7 條公式計算預計交通恢復時間 ETE，並回傳計算分解。
+        依事故路段先重新計算主、次疏散，再由唯一受影響路段定義計算 ETE。
+        模型不得自行傳入或刪減路段清單。
 
         Args:
             severity: 事故嚴重度，只能是 Critical、High 或 Medium。
-            segment_ids: 受影響路段編號，多個以逗號分隔，例如 RD_TPE_002,RD_TPE_004。
+            incident_segment_id: 事故路段編號，例如 RD_TPE_002。
+            incident_location: 事故位置描述，用於上下游判定，可留空。
         """
-        result = traffic_math.calculate_ete(severity, _split_ids(segment_ids), ts)
-        return _dump(result)
+        route = traffic_math.calculate_optimal_route(
+            incident_segment_id, ts, incident_location,
+        )
+        if "error" in route:
+            return _dump(route)
+        affected_ids = traffic_math.affected_segments_for_ete(
+            incident_segment_id, route,
+        )
+        result = traffic_math.calculate_ete(severity, affected_ids, ts)
+        return _dump({
+            "incident_segment_id": incident_segment_id,
+            "primary_route": route.get("primary_route", {}).get("name"),
+            "secondary_routes": [
+                item.get("name") for item in route.get("secondary_routes", [])
+            ],
+            "affected_segment_definition": "事故路段 + 主疏散路段 + 次要疏散路段",
+            "route_selection_reason": route.get("selection_reason"),
+            "ete": result,
+        })
 
     @tool
     def signal_plan(segment_id: str) -> str:

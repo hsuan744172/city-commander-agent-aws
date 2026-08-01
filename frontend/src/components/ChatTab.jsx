@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, RotateCcw, Send, Sparkles, User, Wrench } from "lucide-react";
+import { Bot, Gauge, Loader2, RotateCcw, Send, Sparkles, User, Wrench } from "lucide-react";
 import { cn } from "../lib/utils";
 
 const TOOL_LABELS = {
@@ -70,13 +70,20 @@ export default function ChatTab({
           dataAsOf: data.data_as_of,
           citedClauses: data.cited_clauses || [],
           toolsUsed: data.tools_used || [],
+          confidence: data.confidence || null,
         },
       ]);
     } catch (e) {
       onMessagesChange([
         ...messages,
         { role: "user", content: prompt },
-        { role: "assistant", content: `連線錯誤：${e.message}` },
+        { role: "assistant", content: `連線錯誤：${e.message}`, confidence: {
+          score: 0,
+          level: "low",
+          label: "低信心",
+          evidence_sources: [],
+          reasons: ["無法連線至後端，沒有可驗證的資料證據"],
+        } },
       ]);
     } finally {
       setLoading(false);
@@ -132,6 +139,35 @@ export default function ChatTab({
                   : "bg-[var(--secondary)] text-[var(--foreground)]",
               )}
             >
+              {msg.role === "assistant" && msg.confidence && (
+                <details className="mb-2 w-fit">
+                  <summary
+                    className={cn(
+                      "flex cursor-pointer list-none items-center gap-1.5 rounded-sm border px-2 py-1 text-xs font-medium",
+                      msg.confidence.level === "high"
+                        ? "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-[var(--status-success)]"
+                        : msg.confidence.level === "medium"
+                          ? "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-[var(--status-warning)]"
+                          : "border-[var(--status-error)]/40 bg-[var(--status-error)]/10 text-[var(--status-error)]",
+                    )}
+                  >
+                    <Gauge className="w-3.5 h-3.5" />
+                    {msg.confidence.label} {msg.confidence.score}%
+                  </summary>
+                  <div className="mt-1.5 rounded-md border border-[var(--border)] bg-[var(--background)] p-2.5 text-xs text-[var(--muted-foreground)]">
+                    {msg.confidence.evidence_sources?.length > 0 && (
+                      <div className="mb-1">
+                        證據來源：{msg.confidence.evidence_sources.join("、")}
+                      </div>
+                    )}
+                    <ul className="space-y-0.5">
+                      {msg.confidence.reasons?.map((reason) => (
+                        <li key={reason}>・{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </details>
+              )}
               <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
 
               {/* 實際呼叫的確定性計算工具 */}

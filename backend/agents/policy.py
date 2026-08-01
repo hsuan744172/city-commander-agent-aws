@@ -192,16 +192,7 @@ def check_sop3_trigger(timestamp: str | None = None, reading: dict | None = None
             "count_hit": count_hit,
             "data_as_of": data.get("data_as_of"),
         },
-        "actions": (
-            [
-                "建議臺北捷運公司於國父紀念館站啟動過站不停",
-                "通知公車處調度接駁專車疏運",
-                f"引導群眾步行至{_station_label(sop_rules.SOP3_RELIEF_STATION)}分流",
-                "協調警力維持站體與出口秩序",
-            ]
-            if triggered
-            else []
-        ),
+        "actions": list(sop_rules.SOP3_ACTIONS) if triggered else [],
     }
 
 

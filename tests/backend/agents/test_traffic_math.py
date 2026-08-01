@@ -165,12 +165,13 @@ def test_station_history_peak_only_uses_past_measurements():
 
 
 def test_signal_plan_for_trigger_segment_covers_all_alternatives_and_police():
-    """觸發路段依 SOP 第 1 條調整 alternatives 全集，並輸出警力淨空需求。"""
+    """觸發路段依 SOP 第 1 條調整 alternatives 全集，並輸出不虛構人數的淨空需求。"""
     plan = traffic_math.build_signal_plan("RD_TPE_002", LATE_TIME, 80.0)
     assert plan["scope"] == traffic_math.SIGNAL_SCOPE_SOP1
     adjusted = {a["segment_id"] for a in plan["adjustments"]}
     assert adjusted == set(traffic_math.segment_info("RD_TPE_002")["alternatives"])
-    assert plan["police_dispatch"]["officers"] == 6
+    assert plan["police_dispatch"]["instruction"]
+    assert "officers" not in plan["police_dispatch"]
     assert plan["window"]
 
 
