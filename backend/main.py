@@ -110,6 +110,11 @@ APP_VERSION = "3.0.0"
 # 提高上限只影響單次批次的耗時，不影響 60 秒預算下的單事件延遲。
 MAX_UPLOAD_INCIDENTS = int(os.environ.get("MAX_UPLOAD_INCIDENTS", "10"))
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", "1048576"))
+COMMANDER_BUDGET_SECONDS = float(os.environ.get("COMMANDER_BUDGET_SECONDS", "60"))
+COMMANDER_AI_TIMEOUT_SECONDS = min(
+    float(os.environ.get("COMMANDER_AI_TIMEOUT_SECONDS", "55")),
+    max(1.0, COMMANDER_BUDGET_SECONDS - 1.0),
+)
 
 # 管理員注入介面的共用權杖。留空 = 不驗證（本機 Demo 預設）；
 # 任何共用或公開部署都應設定，因為注入會觸發 Agent 執行並推播給所有儀表板。
@@ -723,7 +728,7 @@ async def traffic_trend(
             data = []
             for _, row in pivot.iterrows():
                 point = {
-                    "time": row["Timestamp"].strftime("%H:%M"),
+                    "time": row["Timestamp"].strftime(sim_clock.TIME_FMT),
                     "timestamp": row["Timestamp"].strftime(sim_clock.TIME_FMT),
                     "is_current": False,
                 }
@@ -738,7 +743,7 @@ async def traffic_trend(
                 stamp = current.strftime(sim_clock.TIME_FMT)
                 if not data or data[-1]["timestamp"] != stamp:
                     point = {
-                        "time": current.strftime("%H:%M"),
+                        "time": current.strftime(sim_clock.TIME_FMT),
                         "timestamp": stamp,
                         "is_current": True,
                     }
@@ -962,15 +967,100 @@ async def camera_frame_info(segment_id: str, camera_id: str):
 # --- 事件與問答 -------------------------------------------------------------
 
 
-@app.post("/api/incidents")
-async def handle_incidents(request: IncidentsRequest):
-    """注入事件，執行完整應變流程。事件未帶 timestamp 時視為「當下」發生。"""
+async def _run_commander_with_budget(
+    incidents: list[dict],
+    session_id: str,
+    sim_time: str | None,
+) -> dict:
+    """先建立確定性基線，再於 60 秒絕對期限內嘗試 AI 強化。"""
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    deadline = started + COMMANDER_BUDGET_SECONDS
+
+    # 確定性 SOP／路網計算先完成，AI 逾時時不必在最後幾秒才重新計算。
+    # 五秒只限制異常卡死；正常資料集約在一秒內完成。
+    deterministic_timeout = min(5.0, COMMANDER_BUDGET_SECONDS)
+    try:
+        baseline = await asyncio.wait_for(
+            asyncio.to_thread(
+                run_commander,
+                {"incidents": incidents},
+                session_id,
+                sim_time,
+                False,
+            ),
+            timeout=deterministic_timeout,
+        )
+    except TimeoutError:
+        elapsed = loop.time() - started
+        return {
+            "status": "deadline_exceeded",
+            "generated_at": sim_time or sim_clock.now_str(),
+            "sim_time": sim_time or sim_clock.now_str(),
+            "total_incidents": len(incidents),
+            "processed": 0,
+            "failed": len(incidents),
+            "advisories": [],
+            "deadline_fallback": True,
+            "fallback_reason": "確定性 SOP 計算未能在安全時限內完成",
+            "elapsed_seconds": round(elapsed, 2),
+            "budget_seconds": COMMANDER_BUDGET_SECONDS,
+            "within_budget": elapsed <= COMMANDER_BUDGET_SECONDS,
+        }
+
+    remaining = deadline - loop.time()
+    report = baseline
+    fallback_reason = ""
+    if remaining > 0:
+        try:
+            report = await asyncio.wait_for(
+                asyncio.to_thread(
+                    run_commander,
+                    {"incidents": incidents},
+                    session_id,
+                    sim_time,
+                ),
+                timeout=min(COMMANDER_AI_TIMEOUT_SECONDS, remaining),
+            )
+        except TimeoutError:
+            fallback_reason = "AI 處理逾時，已回傳預先完成的確定性 SOP 方案"
+            logger.warning(
+                "AI 事件處理超過可用期限，回傳確定性建議書：session=%s",
+                session_id,
+            )
+        except Exception:
+            fallback_reason = "AI 處理異常，已回傳預先完成的確定性 SOP 方案"
+            logger.exception("AI 事件處理異常，回傳確定性建議書：session=%s", session_id)
+    else:
+        fallback_reason = "確定性方案完成後已無 AI 強化時間"
+
+    used_fallback = report is baseline
+    report["deadline_fallback"] = used_fallback
+    if used_fallback:
+        report["fallback_reason"] = fallback_reason
+
+    elapsed = loop.time() - started
+    report["elapsed_seconds"] = round(elapsed, 2)
+    report["budget_seconds"] = COMMANDER_BUDGET_SECONDS
+    report["within_budget"] = elapsed <= COMMANDER_BUDGET_SECONDS
+    return report
+
+
+@app.post("/api/incidents", deprecated=True)
+async def handle_incidents(
+    request: IncidentsRequest,
+    x_admin_token: str | None = Header(None, alias="X-Admin-Token"),
+):
+    """向後相容事件入口；正式操作應使用 preview → inject 流程。"""
+    denied = _admin_denied(x_admin_token)
+    if denied:
+        return denied
+
     incidents_data = [inc.model_dump() for inc in request.incidents]
     session_id = request.session_id or f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
-    report = await asyncio.to_thread(
-        run_commander,
-        {"incidents": incidents_data},
+    report = await _run_commander_with_budget(
+        incidents_data,
         session_id,
         request.sim_time or None,
     )
@@ -978,12 +1068,17 @@ async def handle_incidents(request: IncidentsRequest):
     return JSONResponse(content=report)
 
 
-@app.post("/api/incidents/upload")
+@app.post("/api/incidents/upload", deprecated=True)
 async def upload_incidents(
     file: UploadFile,
     ts: str | None = Query(None, description="本次分析套用的模擬時間"),
+    x_admin_token: str | None = Header(None, alias="X-Admin-Token"),
 ):
-    """上傳並驗證 live_incidents.json，再執行有限批次的應變分析。"""
+    """向後相容上傳入口；正式操作應使用 preview/upload → inject 流程。"""
+    denied = _admin_denied(x_admin_token)
+    if denied:
+        return denied
+
     try:
         content = await file.read()
         if not content:
@@ -1039,9 +1134,7 @@ async def upload_incidents(
 
         session_id = f"upload_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         logger.info("開始處理上傳事件：檔案=%s，事件數=%s", file.filename, len(incidents))
-        report = await asyncio.to_thread(
-            run_commander, {"incidents": incidents}, session_id, ts,
-        )
+        report = await _run_commander_with_budget(incidents, session_id, ts)
         logger.info(
             "上傳事件處理完成：session=%s，processed=%s，failed=%s",
             session_id,
@@ -1272,9 +1365,7 @@ async def inject_incidents(
     )
 
     try:
-        report = await asyncio.to_thread(
-            run_commander, {"incidents": incidents}, session_id, clock_time
-        )
+        report = await _run_commander_with_budget(incidents, session_id, clock_time)
     except Exception:
         logger.exception("事件注入執行失敗：session=%s", session_id)
         envelope = ApiErrorResponse.internal(
@@ -1376,13 +1467,11 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             payload = json.loads(data)
             if "incidents" in payload:
-                report = await asyncio.to_thread(
-                    run_commander,
-                    {"incidents": payload["incidents"]},
-                    "ws",
-                    payload.get("sim_time"),
-                )
-                await websocket.send_text(json.dumps({"type": "report", **report}, ensure_ascii=False, default=str))
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "code": "INCIDENT_PREVIEW_REQUIRED",
+                    "message": "事件注入請使用 /api/incidents/preview 與 /api/incidents/inject 完成確認流程",
+                }, ensure_ascii=False))
     except WebSocketDisconnect:
         pass
     except Exception as e:

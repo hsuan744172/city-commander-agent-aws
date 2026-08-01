@@ -50,7 +50,8 @@ export default function DashboardTab({ network, onInspectSegment }) {
   const loadSummary = useCallback(async () => {
     setLoadingSummary(true);
     try {
-      const res = await fetch("/api/alert-summary");
+      const query = timestamp ? `?ts=${encodeURIComponent(timestamp)}` : "";
+      const res = await fetch(`/api/alert-summary${query}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setSummary(await res.json());
     } catch {
@@ -58,7 +59,7 @@ export default function DashboardTab({ network, onInspectSegment }) {
     } finally {
       setLoadingSummary(false);
     }
-  }, []);
+  }, [timestamp]);
 
   useEffect(() => {
     if (!signature) return;

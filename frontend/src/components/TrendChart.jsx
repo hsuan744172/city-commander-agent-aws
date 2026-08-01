@@ -113,7 +113,12 @@ export default function TrendChart({ selectedSegment, onClear, simTime, threshol
         <ResponsiveContainer width="100%" height={chartHeight}>
           <LineChart data={allData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="time" stroke="var(--muted-foreground)" fontSize={11} />
+            <XAxis
+              dataKey="time"
+              stroke="var(--muted-foreground)"
+              fontSize={11}
+              tickFormatter={(value) => String(value).slice(-5)}
+            />
             <YAxis stroke="var(--muted-foreground)" fontSize={11} domain={[0, 1.05]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
             <ReferenceLine
               y={levelA}

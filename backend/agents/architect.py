@@ -285,7 +285,7 @@ def _cross_system_actions(policy_result: dict, routing_result: dict) -> list[dic
 # ---------------------------------------------------------------------------
 
 
-def _process_incident(incident: dict, triggers_for=None) -> dict:
+def _process_incident(incident: dict, triggers_for=None, allow_ai: bool = True) -> dict:
     """
     處理單一事件。
 
@@ -341,10 +341,19 @@ def _process_incident(incident: dict, triggers_for=None) -> dict:
     # Phase 4: 跨系統聯動（確定性）
     cross_actions = _cross_system_actions(policy_result, routing_result)
 
-    # Phase 5: AI 建議書敘述 + 現場處置條列（單一次 Bedrock 呼叫）
-    ai = _generate_advisory_ai(
-        incident, info, policy_result, routing_result, comms_result, cross_actions
-    )
+    # Phase 5: AI 建議書敘述 + 現場處置條列。若已進入時限降級，直接使用
+    # 確定性 SOP 結果，避免模型延遲阻擋 60 秒事件處置預算。
+    if allow_ai:
+        ai = _generate_advisory_ai(
+            incident, info, policy_result, routing_result, comms_result, cross_actions
+        )
+    else:
+        ai = {
+            "narrative": _deterministic_narrative(incident, policy_result, routing_result),
+            "actions": _fallback_actions(info, policy_result, routing_result),
+            "title": _advisory_title(info),
+            "source": "deadline_fallback",
+        }
 
     advisory = _assemble_advisory(
         incident, info, policy_result, routing_result, comms_result,
@@ -678,6 +687,7 @@ def _assemble_advisory(
             "primary_evacuation_route": routing_result.get("route_recommendation"),
             "ete_estimate": routing_result.get("ete_result"),
             "route_analysis": routing_result.get("route_analysis"),
+            "navigation_update": routing_result.get("navigation_update", {}),
             "signal_plans": routing_result.get("signal_plans", []),
             "signal_adjustments": routing_result.get("signal_suggestions", []),
         },
@@ -704,7 +714,12 @@ def _assemble_advisory(
 # ---------------------------------------------------------------------------
 
 
-def run_commander(event: dict | None = None, session_id: str = "", sim_time: str | None = None) -> dict:
+def run_commander(
+    event: dict | None = None,
+    session_id: str = "",
+    sim_time: str | None = None,
+    allow_ai: bool = True,
+) -> dict:
     """
     總指揮主流程。
 
@@ -746,7 +761,7 @@ def run_commander(event: dict | None = None, session_id: str = "", sim_time: str
                 return {"event_id": "UNKNOWN", "error": "Invalid incident", "status": "failed"}
             try:
                 with sim_clock.override(effective_time):
-                    return _process_incident(incident, cached_triggers)
+                    return _process_incident(incident, cached_triggers, allow_ai=allow_ai)
             except Exception as e:
                 import traceback
 

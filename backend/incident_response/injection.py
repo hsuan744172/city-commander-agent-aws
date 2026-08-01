@@ -381,12 +381,11 @@ class EventInjectionService:
     def verify_preview_hash(preview: IncidentPreview, submitted: str | None) -> None:
         """Reject a payload that was edited after the operator reviewed it."""
 
-        if submitted is None or not submitted.strip():
-            return
-        if submitted.strip().casefold() != preview.preview_hash:
+        received = submitted.strip() if submitted else ""
+        if received.casefold() != preview.preview_hash:
             raise PreviewMismatchError(
                 expected=preview.preview_hash,
-                received=submitted.strip(),
+                received=received,
             )
 
     @staticmethod

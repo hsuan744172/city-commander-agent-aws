@@ -70,7 +70,7 @@ const STATION_NAMES = {
 /**
  * 建立站點 GeoJSON — 結合靜態座標與動態人流資料
  */
-function buildStationGeoJSON(stations = [], roamingThreshold = 0.3) {
+function buildStationGeoJSON(stations = [], roamingThreshold = Number.POSITIVE_INFINITY) {
   const stationDataMap = new Map(stations.map((s) => [s.bs_id, s]));
   const features = Object.entries(STATION_COORDS).map(([id, coords]) => {
     const data = stationDataMap.get(id);
@@ -133,14 +133,12 @@ function buildStationGeoJSON(stations = [], roamingThreshold = 0.3) {
 }
 
 /**
- * 飽和度 → 顏色（與即時路網監測一致）
- * A 級 (≥ 0.95): 紅色 --status-error
- * B 級 (≥ 0.85): 橘黃 --status-warning
- * Normal (< 0.85): 綠色 --status-success
+ * 後端分級 → 顏色（門檻只由後端規則決定）
+ * A 級：紅色；B 級：橘黃；Normal：綠色
  */
-function saturationToColor(score) {
-  if (score >= 0.95) return "#D94F4F";
-  if (score >= 0.85) return "#C8922A";
+function levelToColor(level) {
+  if (level === "A") return "#D94F4F";
+  if (level === "B") return "#C8922A";
   return "#3A9E74";
 }
 
@@ -254,7 +252,7 @@ function buildRoadGeoJSON(segments, selectedId = null) {
       vehicle_count: seg.vehicle_count,
       level: seg.level,
       lane_status: seg.lane_status,
-      color: saturationToColor(seg.saturation_score),
+      color: levelToColor(seg.level),
       selected: seg.segment_id === selectedId ? 1 : 0,
     };
     // 正向
@@ -744,7 +742,10 @@ export default function CityMap3D({
     const source = map.getSource("stations");
     if (!source) return;
 
-    const geojson = buildStationGeoJSON(stations, thresholds?.sop6_roaming ?? 0.3);
+    const geojson = buildStationGeoJSON(
+      stations,
+      thresholds?.sop6_roaming ?? Number.POSITIVE_INFINITY,
+    );
     source.setData(geojson);
   }, [stations, mapLoaded, thresholds]);
 

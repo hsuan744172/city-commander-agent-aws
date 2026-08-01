@@ -159,6 +159,43 @@ def run_routing(task_payload: dict) -> dict:
                 else "",
             })
 
+    # --- 4. 導航更新發布（命題要求） ---
+    # 專案沒有連接商用導航供應商，因此明確標示為模擬發布；內容仍是可直接交付
+    # 導航介面的結構化封閉路段、主次疏散與排除理由，避免只停留在文字建議。
+    if route_recommendation:
+        navigation_update = {
+            "status": "simulated_published",
+            "simulated": True,
+            "published_at": timestamp,
+            "event_id": event_id,
+            "closed_segment_id": traffic_segment,
+            "closed_segment_name": incident_name,
+            "primary_route": {
+                "segment_id": route_recommendation.get("primary_route_id", ""),
+                "name": route_recommendation.get("primary_route_name", ""),
+            },
+            "secondary_routes": [
+                {"segment_id": route.get("segment_id", ""), "name": route.get("name", "")}
+                for route in route_recommendation.get("secondary_routes", [])
+            ],
+            "excluded_routes": [
+                {
+                    "segment_id": route.get("segment_id", ""),
+                    "name": route.get("name", ""),
+                    "reason": route.get("reason", ""),
+                }
+                for route in route_recommendation.get("excluded_routes", [])
+            ],
+        }
+    else:
+        navigation_update = {
+            "status": "not_applicable",
+            "simulated": True,
+            "published_at": timestamp,
+            "event_id": event_id,
+            "reason": "本事件依 SOP 不需替代路徑重規劃",
+        }
+
     return {
         "event_id": event_id,
         "timestamp": timestamp,
@@ -171,5 +208,6 @@ def run_routing(task_payload: dict) -> dict:
         "affected_segment_ids": affected_segment_ids,
         "signal_plans": signal_plans,
         "signal_suggestions": signal_suggestions,
+        "navigation_update": navigation_update,
         "errors": errors,
     }

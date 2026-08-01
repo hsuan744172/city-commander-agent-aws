@@ -55,9 +55,10 @@ export default function ChatTab({
       const res = await fetch("/api/what-if", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, session_id: sessionId }),
+        body: JSON.stringify({ prompt, session_id: sessionId, sim_time: simTime || "" }),
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       onMessagesChange([
         ...messages,
         { role: "user", content: prompt },

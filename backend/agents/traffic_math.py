@@ -399,29 +399,62 @@ def calculate_optimal_route(
         )
         secondary = [c for c in tier3[1:]]
     else:
-        fallback_id = alternatives[0] if alternatives else ""
-        primary = {
-            "segment_id": fallback_id,
-            "name": segment_map.get(fallback_id, {}).get("name", "") if fallback_id else "",
-            "capacity_vph": int(segment_map.get(fallback_id, {}).get("capacity_vph", 0) or 0),
-            "saturation_score": None,
-            "saturation_available": False,
-            "capacity_ok": False,
-            "is_intersecting": False,
-            "intersection_index": -1,
-            "is_upstream": False,
-            "is_congested": True,
-            "tier": 0,
-            "role": "primary",
-            "reason": "所有替代道路容量均未達門檻",
-        }
+        # 最後防線：替代清單為空或全數容量不足時，改掃描全路網。
+        # 優先選擇非事故路段中容量達門檻且飽和度最低者；若資料本身沒有
+        # 任何達標路段，仍從非事故路段取最低飽和度者，保證不回傳空路徑。
+        fallback_pool = [
+            segment for segment in road_network
+            if segment.get("segment_id") != incident_segment_id
+            and int(segment.get("capacity_vph") or 0) >= sop_rules.SOP2_MIN_CAPACITY_VPH
+        ]
+        fallback_scope = "全路網容量達門檻路段"
+        if not fallback_pool:
+            fallback_pool = [
+                segment for segment in road_network
+                if segment.get("segment_id") != incident_segment_id
+            ]
+            fallback_scope = "全路網非事故路段"
+        if not fallback_pool:
+            fallback_pool = [incident_info]
+            fallback_scope = "事故路段（路網無其他路段）"
+
+        emergency_candidates = []
+        for segment in fallback_pool:
+            segment_id = segment.get("segment_id", incident_segment_id)
+            segment_flow = time_df[time_df["Segment_ID"] == segment_id]
+            has_flow = not segment_flow.empty
+            saturation = (
+                float(segment_flow.iloc[0]["Saturation_Score"])
+                if has_flow else None
+            )
+            capacity = int(segment.get("capacity_vph") or 0)
+            emergency_candidates.append({
+                "segment_id": segment_id,
+                "name": segment.get("name") or segment_id,
+                "capacity_vph": capacity,
+                "saturation_score": round(saturation, 4) if saturation is not None else None,
+                "saturation_available": has_flow,
+                "capacity_ok": capacity >= sop_rules.SOP2_MIN_CAPACITY_VPH,
+                "is_intersecting": False,
+                "intersection_index": -1,
+                "is_upstream": False,
+                "is_congested": bool(
+                    saturation is not None and saturation >= sop_rules.LEVEL_B_THRESHOLD
+                ),
+                "tier": 0,
+                "role": "excluded",
+                "reason": f"Emergency Fallback：從{fallback_scope}依最低飽和度選取",
+            })
+
+        primary = by_saturation(emergency_candidates)[0]
         selection_tier = 0
         selection_reason = (
-            "緊急退階：所有替代道路容量均未達 SOP 第 2 條 (1) 門檻，"
-            "維持既有動線並優先以大眾運輸疏運"
+            "Emergency Fallback：事故路段沒有符合前述退階條件的替代道路，"
+            f"改從{fallback_scope}選取飽和度最低的 {primary['name']}"
+            f"（{_percent(primary['saturation_score'] or 0)}）"
         )
         secondary = []
-        candidates.append(primary)
+        candidates.extend(emergency_candidates)
 
     primary["role"] = "primary"
     for candidate in secondary:
