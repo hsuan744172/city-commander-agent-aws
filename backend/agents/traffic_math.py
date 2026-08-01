@@ -14,13 +14,11 @@ from pathlib import Path
 import pandas as pd
 
 from backend import sim_clock
+from backend.data_source import get_data_path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data"
-
-TRAFFIC_FLOW_CSV = DATA_DIR / "city_traffic_flow.csv"
-ROAD_NETWORK_JSON = DATA_DIR / "road_network_geometry.json"
-CROWD_DENSITY_CSV = DATA_DIR / "signaling_crowd_density.csv"
+TRAFFIC_FLOW_FILE = "city_traffic_flow.csv"
+ROAD_NETWORK_FILE = "road_network_geometry.json"
+CROWD_DENSITY_FILE = "signaling_crowd_density.csv"
 
 # 資料切片語意 (SIM_DATA_MODE)：
 #   interpolate (預設) — 在前後兩筆量測之間對數值欄位做線性插值，數值連續變化。
@@ -74,26 +72,32 @@ def _cached(path: Path, builder):
 
 
 def _load_traffic_flow() -> pd.DataFrame:
+    path = get_data_path(TRAFFIC_FLOW_FILE)
+
     def build() -> pd.DataFrame:
-        df = pd.read_csv(TRAFFIC_FLOW_CSV, parse_dates=["Timestamp"])
+        df = pd.read_csv(path, parse_dates=["Timestamp"])
         df["Saturation_Score"] = _safe_pct_to_float(df["Saturation_Score"])
         return df.sort_values("Timestamp")
-    return _cached(TRAFFIC_FLOW_CSV, build).copy()
+    return _cached(path, build).copy()
 
 
 def _load_road_network() -> list[dict]:
+    path = get_data_path(ROAD_NETWORK_FILE)
+
     def build() -> list[dict]:
-        with open(ROAD_NETWORK_JSON, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
-    return _cached(ROAD_NETWORK_JSON, build)
+    return _cached(path, build)
 
 
 def _load_crowd_density() -> pd.DataFrame:
+    path = get_data_path(CROWD_DENSITY_FILE)
+
     def build() -> pd.DataFrame:
-        df = pd.read_csv(CROWD_DENSITY_CSV, parse_dates=["Timestamp"])
+        df = pd.read_csv(path, parse_dates=["Timestamp"])
         df["Roaming_User_Pct"] = _safe_pct_to_float(df["Roaming_User_Pct"])
         return df.sort_values("Timestamp")
-    return _cached(CROWD_DENSITY_CSV, build).copy()
+    return _cached(path, build).copy()
 
 
 def _asof_rows(df: pd.DataFrame, ts: pd.Timestamp, key_col: str) -> pd.DataFrame:

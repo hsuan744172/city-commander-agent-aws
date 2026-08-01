@@ -57,6 +57,7 @@ from pydantic import BaseModel, ValidationError  # noqa: E402
 
 from backend import camera_stream, sim_clock  # noqa: E402
 from backend.agents.architect import run_commander  # noqa: E402
+from backend.data_source import data_source_status, get_data_path  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Config
@@ -66,7 +67,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "data"
 MAX_UPLOAD_INCIDENTS = int(os.environ.get("MAX_UPLOAD_INCIDENTS", "3"))
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", "1048576"))
 
@@ -175,10 +175,6 @@ def _build_status(ts: str | None = None) -> dict:
         calculate_ete,
         calculate_optimal_route,
     )
-
-    csv_path = DATA_DIR / "city_traffic_flow.csv"
-    if not csv_path.exists():
-        return {"error": "Traffic data not found", "segments": [], "auto_advisories": []}
 
     with sim_clock.override(ts) as forced:
         current = sim_clock.now()
@@ -294,6 +290,7 @@ async def health():
         "timestamp": datetime.now().strftime(sim_clock.TIME_FMT),
         "sim_time": sim_clock.now_str(),
         "clock_mode": sim_clock.state()["mode"],
+        "data_source": data_source_status(),
     }
 
 
@@ -402,10 +399,6 @@ async def traffic_trend(
 
         from backend.agents.traffic_math import _get_time_slice, _load_traffic_flow
 
-        csv_path = DATA_DIR / "city_traffic_flow.csv"
-        if not csv_path.exists():
-            return {"data": []}
-
         with sim_clock.override(ts):
             current = sim_clock.now()
             full_df = _load_traffic_flow()
@@ -475,7 +468,7 @@ async def road_network():
     回傳路網靜態幾何資訊（車道容量、路口、替代道路）。
     供 3D 街景視角依 capacity_vph 推算車道數與路寬。靜態資料，不隨時間變動。
     """
-    json_path = DATA_DIR / "road_network_geometry.json"
+    json_path = get_data_path("road_network_geometry.json")
     if not json_path.exists():
         return JSONResponse(content={"segments": []})
 

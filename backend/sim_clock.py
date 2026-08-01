@@ -45,10 +45,7 @@ except Exception:  # pragma: no cover — 沒裝 python-dotenv 也要能跑
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "data"
-TRAFFIC_FLOW_CSV = DATA_DIR / "city_traffic_flow.csv"
-CROWD_DENSITY_CSV = DATA_DIR / "signaling_crowd_density.csv"
+from backend.data_source import get_data_path
 
 TIME_FMT = "%Y-%m-%d %H:%M"
 MODES = ("smooth", "playback", "auto", "fixed", "latest")
@@ -71,22 +68,27 @@ _timeline_cache: dict = {}
 _timeline_lock = threading.Lock()
 
 
-def _cache_key() -> tuple:
-    return tuple(
-        p.stat().st_mtime_ns if p.exists() else 0
-        for p in (TRAFFIC_FLOW_CSV, CROWD_DENSITY_CSV)
+def _data_paths() -> tuple[Path, Path]:
+    return (
+        get_data_path("city_traffic_flow.csv"),
+        get_data_path("signaling_crowd_density.csv"),
     )
+
+
+def _cache_key() -> tuple:
+    return tuple(p.stat().st_mtime_ns if p.exists() else 0 for p in _data_paths())
 
 
 def timeline() -> list[pd.Timestamp]:
     """資料集中所有出現過的時間點（去重、升冪）。"""
-    key = _cache_key()
+    paths = _data_paths()
+    key = tuple(p.stat().st_mtime_ns if p.exists() else 0 for p in paths)
     with _timeline_lock:
         if _timeline_cache.get("key") == key:
             return _timeline_cache["timeline"]
 
         stamps: set[pd.Timestamp] = set()
-        for path in (TRAFFIC_FLOW_CSV, CROWD_DENSITY_CSV):
+        for path in paths:
             if not path.exists():
                 continue
             try:

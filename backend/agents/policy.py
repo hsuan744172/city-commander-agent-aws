@@ -10,10 +10,7 @@ SOP-Policy Agent — 法規驗證與級別判定。
 from __future__ import annotations
 
 import re
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SOP_FILE = PROJECT_ROOT / "data" / "emergency_traffic_sop.txt"
+from backend.data_source import get_data_path, get_data_source_name
 
 
 def assess_congestion_level(saturation_score: float) -> str:
@@ -82,15 +79,17 @@ def check_sop5_trigger(incident: dict) -> dict:
 
 
 def read_traffic_sop(section: str | None = None) -> dict:
-    """讀取本地 SOP 文本。"""
-    if not SOP_FILE.exists():
+    """優先讀取 S3 SOP，無法讀取時回退本地文本。"""
+    sop_file = get_data_path("emergency_traffic_sop.txt")
+    if not sop_file.exists():
         return {"error": "SOP 檔案不存在", "sop_text": ""}
 
-    with open(SOP_FILE, encoding="utf-8") as f:
+    with open(sop_file, encoding="utf-8") as f:
         full_text = f.read()
 
+    source = get_data_source_name("emergency_traffic_sop.txt")
     if not section:
-        return {"source": "local_file", "sop_text": full_text}
+        return {"source": source, "sop_text": full_text}
 
     # 條號搜尋
     num_match = re.search(r"(\d+)", section)
@@ -99,15 +98,15 @@ def read_traffic_sop(section: str | None = None) -> dict:
         parts = full_text.split("=" * 10)
         for part in parts:
             if f"{num}." in part or f"第{num}條" in part.replace(" ", ""):
-                return {"source": "local_file", "section_query": section, "sop_text": part.strip(), "matched": True}
+                return {"source": source, "section_query": section, "sop_text": part.strip(), "matched": True}
 
     # 關鍵字搜尋
     parts = full_text.split("=" * 10)
     matched = [p.strip() for p in parts if p.strip() and section.lower() in p.lower()]
     if matched:
-        return {"source": "local_file", "section_query": section, "sop_text": "\n\n".join(matched), "matched": True}
+        return {"source": source, "section_query": section, "sop_text": "\n\n".join(matched), "matched": True}
 
-    return {"source": "local_file", "section_query": section, "sop_text": full_text, "matched": False}
+    return {"source": source, "section_query": section, "sop_text": full_text, "matched": False}
 
 
 def run_assessment(task_payload: dict) -> dict:

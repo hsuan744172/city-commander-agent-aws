@@ -15,6 +15,7 @@ TARGET_GROUP_NAME="${TARGET_GROUP_NAME:-city-commander-tg}"
 TASK_FAMILY="${TASK_FAMILY:-city-commander-agent}"
 LOG_GROUP_NAME="${LOG_GROUP_NAME:-/ecs/city-commander-agent}"
 MAX_UPLOAD_INCIDENTS="${MAX_UPLOAD_INCIDENTS:-3}"
+S3_DATA_PREFIX="${S3_DATA_PREFIX:-data}"
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || { echo "Required command not found: $1" >&2; exit 1; }
@@ -23,9 +24,30 @@ require_command aws
 require_command docker
 
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text --region "$AWS_REGION")"
+S3_DATA_BUCKET="${S3_DATA_BUCKET:-${SERVICE_NAME}-${ACCOUNT_ID}-${AWS_REGION}-data}"
+S3_DATA_URI="s3://${S3_DATA_BUCKET}"
+if [[ -n "$S3_DATA_PREFIX" ]]; then
+  S3_DATA_URI="${S3_DATA_URI}/${S3_DATA_PREFIX}"
+fi
 IMAGE_TAG="${IMAGE_TAG:-$(date -u +%Y%m%d%H%M%S)}"
 ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
 IMAGE_URI="${ECR_URI}:${IMAGE_TAG}"
+
+if ! aws s3api head-bucket --bucket "$S3_DATA_BUCKET" --region "$AWS_REGION" >/dev/null 2>&1; then
+  if [[ "$AWS_REGION" == "us-east-1" ]]; then
+    aws s3api create-bucket --bucket "$S3_DATA_BUCKET" --region "$AWS_REGION" >/dev/null
+  else
+    aws s3api create-bucket --bucket "$S3_DATA_BUCKET" --region "$AWS_REGION" \
+      --create-bucket-configuration "LocationConstraint=$AWS_REGION" >/dev/null
+  fi
+fi
+aws s3api put-public-access-block --bucket "$S3_DATA_BUCKET" --region "$AWS_REGION" \
+  --public-access-block-configuration \
+  'BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true'
+aws s3api put-bucket-encryption --bucket "$S3_DATA_BUCKET" --region "$AWS_REGION" \
+  --server-side-encryption-configuration \
+  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+aws s3 sync "$PROJECT_ROOT/data/" "${S3_DATA_URI}/" --region "$AWS_REGION"
 
 aws logs create-log-group --log-group-name "$LOG_GROUP_NAME" --region "$AWS_REGION" >/dev/null 2>&1 || true
 aws logs put-retention-policy --log-group-name "$LOG_GROUP_NAME" --retention-in-days 14 --region "$AWS_REGION" >/dev/null 2>&1 || true
@@ -55,6 +77,33 @@ cat >"$TEMP_DIR/ecs-task-trust.json" <<'JSON'
 }
 JSON
 
+S3_OBJECT_RESOURCE="arn:aws:s3:::${S3_DATA_BUCKET}/*"
+S3_LIST_PREFIX="*"
+if [[ -n "$S3_DATA_PREFIX" ]]; then
+  S3_OBJECT_RESOURCE="arn:aws:s3:::${S3_DATA_BUCKET}/${S3_DATA_PREFIX}/*"
+  S3_LIST_PREFIX="${S3_DATA_PREFIX}/*"
+fi
+cat >"$TEMP_DIR/s3-data-read-policy.json" <<JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListCityCommanderData",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::${S3_DATA_BUCKET}",
+      "Condition": {"StringLike": {"s3:prefix": ["${S3_LIST_PREFIX}"]}}
+    },
+    {
+      "Sid": "ReadCityCommanderData",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "${S3_OBJECT_RESOURCE}"
+    }
+  ]
+}
+JSON
+
 ensure_role() {
   local role_name="$1"
   if aws iam get-role --role-name "$role_name" >/dev/null 2>&1; then
@@ -77,6 +126,10 @@ aws iam put-role-policy \
   --role-name "$TASK_ROLE_NAME" \
   --policy-name CityCommanderBedrockClaudeSonnet46 \
   --policy-document "file://$PROJECT_ROOT/deployment/iam/bedrock-claude-sonnet-4-6-policy.json"
+aws iam put-role-policy \
+  --role-name "$TASK_ROLE_NAME" \
+  --policy-name CityCommanderS3DataRead \
+  --policy-document "file://$TEMP_DIR/s3-data-read-policy.json"
 
 TASK_EXECUTION_ROLE_ARN="$(aws iam get-role --role-name "$TASK_EXECUTION_ROLE_NAME" --query 'Role.Arn' --output text)"
 TASK_ROLE_ARN="$(aws iam get-role --role-name "$TASK_ROLE_NAME" --query 'Role.Arn' --output text)"
@@ -168,6 +221,8 @@ cat >"$TEMP_DIR/task-definition.json" <<JSON
     "portMappings": [{"containerPort": 8080, "hostPort": 8080, "protocol": "tcp"}],
     "environment": [
       {"name": "APP_AWS_REGION", "value": "$AWS_REGION"},
+      {"name": "S3_DATA_BUCKET", "value": "$S3_DATA_BUCKET"},
+      {"name": "S3_DATA_PREFIX", "value": "$S3_DATA_PREFIX"},
       {"name": "BEDROCK_MODEL_ID", "value": "$MODEL_ID"},
       {"name": "SIM_DATA_MODE", "value": "asof"},
       {"name": "MAX_UPLOAD_INCIDENTS", "value": "$MAX_UPLOAD_INCIDENTS"},
@@ -212,4 +267,5 @@ fi
 aws ecs wait services-stable --region "$AWS_REGION" --cluster "$CLUSTER_NAME" --services "$SERVICE_NAME"
 ALB_DNS="$(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
   --load-balancer-arns "$ALB_ARN" --query 'LoadBalancers[0].DNSName' --output text)"
-printf '\nDeployment complete: http://%s\nHealth check: http://%s/api/health\n' "$ALB_DNS" "$ALB_DNS"
+printf '\nDeployment complete: http://%s\nHealth check: http://%s/api/health\nData source: %s/\n' \
+  "$ALB_DNS" "$ALB_DNS" "$S3_DATA_URI"

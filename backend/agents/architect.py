@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -16,15 +17,13 @@ from backend import sim_clock
 from backend.agents.comms import run_comms
 from backend.agents.policy import run_assessment
 from backend.agents.router import run_routing
+from backend.data_source import get_data_path
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 LIVE_INCIDENTS_FILE = DATA_DIR / "live_incidents.json"
-TRAFFIC_FLOW_CSV = DATA_DIR / "city_traffic_flow.csv"
-ROAD_NETWORK_JSON = DATA_DIR / "road_network_geometry.json"
-CROWD_DENSITY_CSV = DATA_DIR / "signaling_crowd_density.csv"
 
 
 def _load_incidents(event: dict | None = None) -> list[dict]:
@@ -42,9 +41,6 @@ def _load_traffic_data(timestamp: str | None = None) -> dict:
     截至查詢時間的路網狀態。timestamp 為空時由模擬時鐘決定當下時間。
     切片邏輯統一交給 traffic_math._get_time_slice，避免多份重複實作。
     """
-    if not TRAFFIC_FLOW_CSV.exists():
-        return {}
-
     from backend.agents.traffic_math import _get_time_slice, _load_traffic_flow
 
     time_df, _ = _get_time_slice(_load_traffic_flow(), timestamp, key_col="Segment_ID")
@@ -64,9 +60,6 @@ def _load_traffic_data(timestamp: str | None = None) -> dict:
 
 def _load_crowd_data(bs_id: str, timestamp: str | None = None) -> dict | None:
     """截至查詢時間、該基地台的最新一筆人流資料。"""
-    if not CROWD_DENSITY_CSV.exists():
-        return None
-
     from backend.agents.traffic_math import _get_time_slice, _load_crowd_density
 
     df = _load_crowd_density()
@@ -94,9 +87,10 @@ def _load_crowd_data(bs_id: str, timestamp: str | None = None) -> dict | None:
 
 
 def _get_nearby_stations(segment_id: str) -> list[str]:
-    if not ROAD_NETWORK_JSON.exists():
+    road_network_file = get_data_path("road_network_geometry.json")
+    if not road_network_file.exists():
         return []
-    with open(ROAD_NETWORK_JSON, encoding="utf-8") as f:
+    with open(road_network_file, encoding="utf-8") as f:
         network = json.load(f)
     for seg in network:
         if seg["segment_id"] == segment_id:
@@ -172,8 +166,9 @@ def _process_incident(incident: dict) -> dict:
     elif is_signal_failure:
         # SOP 第 5 條：號誌故障 → 由 AI 根據 SOP + 路網數據產出處置方案
         intersections = []
-        if ROAD_NETWORK_JSON.exists():
-            with open(ROAD_NETWORK_JSON, encoding="utf-8") as f:
+        road_network_file = get_data_path("road_network_geometry.json")
+        if road_network_file.exists():
+            with open(road_network_file, encoding="utf-8") as f:
                 network = json.load(f)
             for seg in network:
                 if seg["segment_id"] == affected_segment:
@@ -380,35 +375,45 @@ def _generate_ai_narrative(incident: dict, policy_result: dict, routing_result: 
 【交通應變 SOP 原文】
 {sop_text}
 
-【建議書格式要求】
-請依序涵蓋以下五項，每項 2-4 句話，全文控制在 400 字以內：
-1. 事件辨識：觸發事件描述及對應 SOP 條款編號
-2. 交通分級判定：判定依據（引用飽和度數值）
-3. 替代路徑建議：主要疏散路徑與排除理由（若為人流/號誌事件則改為對應處置）
-4. 號誌調整建議：配時調整指令與時段
-5. 跨系統聯動：對北捷、公車處、警力之請求（若適用）
+【輸出格式】
+- 全文硬性上限 450 個中文字
+- 只准輸出「判斷：」「建議：」「行動指令：」三個純文字短段落
+- 每段最多三句，不使用 Markdown 標題、粗體、表格、清單或分隔線
+- 時間一律使用 YYYY-MM-DD HH:MM
+- 只引用上述計算數據與 SOP，不得自行增加回報間隔、人力、時制比例或其他數字
+- 所有數值使用自然中文，例如「飽和度 95%」
 
 【禁止事項】
 - 禁止 LaTeX 符號、程式碼變數名、Markdown 程式碼區塊
+- 禁止輸出英文資料欄位名稱或路段代碼
 - 使用自然中文，以交控長官口吻撰寫
 """
 
     # 透過 Bedrock Claude 產出建議書
     try:
-        result = _call_bedrock(prompt, "你是台北市交控中心 AI 決策顧問，請產出專業建議書。", "narrative")
-        return result.get("response", "")
+        system_prompt = (
+            "你是台北市交控中心 AI 決策顧問。只可依提供的 SOP 與計算結果作答；"
+            "輸出三個純文字短段落，禁止 Markdown 與未提供的數字，全文不得超過 450 字。"
+        )
+        result = _call_bedrock(prompt, system_prompt, "narrative")
+        response = result.get("response", "")
+        for forbidden in ("```", "**", "###", "##", "#", "$", "\\frac", "Saturation_Score", "capacity_vph"):
+            response = response.replace(forbidden, "")
+        response = response.strip()
+        if len(response) > 500:
+            shortened = response[:500]
+            boundary = max(shortened.rfind(mark) for mark in ("。", "！", "？"))
+            response = shortened[: boundary + 1] if boundary >= 350 else shortened
+        return response
     except Exception as e:
         logger.error(f"AI 建議書生成失敗: {e}")
-        # Fallback: 結構化文字
-        parts = [f"【事件辨識】{incident_summary}",
-                 f"【交通分級】{policy_summary}"]
-        if route_summary:
-            parts.append(f"【路徑建議】{route_summary}")
-        if special_summary:
-            parts.append(f"【特殊處置】{special_summary}")
-        if comms_summary:
-            parts.append(f"【通報】{comms_summary}")
-        return "\n\n".join(parts)
+        description = incident.get("description") or "事件已受理"
+        location = incident.get("location") or "受影響區域"
+        return (
+            f"判斷：{location}{description}，已依交通分級與應變程序完成判定。\n"
+            "建議：採用系統核定之疏散路徑與通報內容，並持續監控路網狀態。\n"
+            "行動指令：立即執行建議書所列號誌、疏導及跨單位協調措施。"
+        )
 
 
 def _assemble_advisory(incident, policy_result, routing_result, comms_result, timestamp):
@@ -560,6 +565,16 @@ def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) 
 """
 
     result = _call_bedrock(prompt, system_prompt, session_id)
+    response = result.get("response", "")
+    response = re.sub(r"每\s*(?:\d+|[一二三四五六七八九十]+)\s*分鐘", "持續", response)
+    for forbidden in ("```", "\\frac", "Saturation_Score", "capacity_vph", "$"):
+        response = response.replace(forbidden, "")
+    response = response.strip()
+    if len(response) > 500:
+        shortened = response[:500]
+        boundary = max(shortened.rfind(mark) for mark in ("。", "！", "？"))
+        response = shortened[: boundary + 1] if boundary >= 350 else shortened
+    result["response"] = response
     result["sim_time"] = current_time
     return result
 
