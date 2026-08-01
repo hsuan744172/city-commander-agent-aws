@@ -5,9 +5,11 @@ City Commander Agent — FastAPI 後端入口
 部署：Docker → AWS App Runner
 
 時間模型：
-  後端內建模擬時鐘 (backend/sim_clock.py)，自己依真實時間推進並輪播資料集。
+  後端內建離散模擬時鐘 (backend/sim_clock.py)，依真實時間逐格推進資料集。
+  時鐘只會落在車流與人流「同時」具有完整切片的共同時間軸上，不做插值。
   前端只需要拉 GET /api/status 取「當下狀態」，不需要知道時間軸。
-  任何端點都可用 ?ts=YYYY-MM-DD HH:MM 做單次時間覆寫（不影響全域時鐘）。
+  任何端點都可用 ?ts=YYYY-MM-DD HH:MM 做單次時間覆寫（不影響全域時鐘，
+  且覆寫時間可落在共同時間軸之外，此時才會啟用 traffic_math 的插值語意）。
 
 Endpoints:
   GET  /api/status         → 路網當下狀態 (依模擬時鐘)
@@ -379,12 +381,13 @@ async def get_clock():
 @app.post("/api/clock")
 async def set_clock(settings: ClockSettings):
     """
-    調整時鐘。範例：
-      {"mode": "smooth", "interval": 8}         每 8 秒走完一個資料間隔，數值連續插值 (預設模式)
-      {"mode": "playback", "interval": 5}       每 5 秒「跳」一格，數值階梯狀
-      {"mode": "auto", "speed": 120}            連續時間，120 倍速
-      {"sim_time": "2026-05-20 21:30"}          跳到指定時間 (沿用目前模式)
+    調整時鐘。時鐘為離散式，只會落在車流與人流都有完整切片的共同時間軸上。範例：
+      {"mode": "playback", "interval": 1}       每 1 秒跳一格共同時間切片 (預設模式)
+      {"mode": "playback", "interval": 5}       每 5 秒跳一格，適合較慢的 Demo 節奏
+      {"sim_time": "2026-05-20 21:30"}          跳到指定時間 (沿用目前模式，會對齊共同時間軸)
       {"mode": "fixed", "sim_time": "2026-05-20 22:15"}  凍結在該時間
+      {"mode": "latest"}                        永遠停在共同時間軸最後一格
+    注意：smooth 與 auto 為相容用的舊模式別名，節奏與 playback 相同。
     """
     try:
         state = sim_clock.clock.configure(

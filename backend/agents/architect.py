@@ -7,7 +7,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -23,7 +27,44 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
+# Incident events are uploaded by the operator, not pulled from S3. This local
+# file is only the sample used when no payload is supplied with the request.
 LIVE_INCIDENTS_FILE = DATA_DIR / "live_incidents.json"
+
+# Output-token cap and sampling settings for every Bedrock call. 700 tokens is
+# comfortably above the 450-character target while bounding worst-case latency.
+BEDROCK_MAX_TOKENS = int(os.environ.get("BEDROCK_MAX_TOKENS", "700"))
+BEDROCK_TEMPERATURE = float(os.environ.get("BEDROCK_TEMPERATURE", "0.2"))
+
+# The foundation model admits roughly one request per second, so calls are spaced
+# by a token bucket instead of being serialised behind each other's latency.
+# Incidents are then processed concurrently, which keeps a multi-event batch
+# inside the 60-second demo budget without ever exceeding the request rate.
+BEDROCK_MIN_CALL_INTERVAL = float(os.environ.get("BEDROCK_MIN_CALL_INTERVAL", "1.1"))
+INCIDENT_MAX_WORKERS = int(os.environ.get("INCIDENT_MAX_WORKERS", "4"))
+
+
+class _CallRateLimiter:
+    """Serialise only the *start* of each call, keeping a minimum interval."""
+
+    def __init__(self, min_interval: float) -> None:
+        self._min_interval = max(0.0, min_interval)
+        self._lock = threading.Lock()
+        self._next_allowed = 0.0
+
+    def acquire(self) -> None:
+        if self._min_interval <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            wait = self._next_allowed - now
+            if wait > 0:
+                time.sleep(wait)
+                now = time.monotonic()
+            self._next_allowed = now + self._min_interval
+
+
+_bedrock_rate_limiter = _CallRateLimiter(BEDROCK_MIN_CALL_INTERVAL)
 
 
 def _load_incidents(event: dict | None = None) -> list[dict]:
@@ -297,8 +338,8 @@ def _generate_special_advisory(sop_type: str, incident: dict, context: dict) -> 
     # 透過 Bedrock Claude 產出處置方案
     try:
         result = _call_bedrock(prompt, "你是交控中心 AI 顧問，請產出處置方案。", "special")
-        ai_response = result.get("response", "")
-        if ai_response and "錯誤" not in ai_response and "API" not in ai_response:
+        ai_response = result.get("response", "") if result.get("ok") else ""
+        if ai_response:
             # 解析 AI 回應為條列式
             actions = [line.strip().lstrip("0123456789.、-•·） ") for line in ai_response.split("\n") if line.strip() and len(line.strip()) > 5]
             if actions:
@@ -396,6 +437,8 @@ def _generate_ai_narrative(incident: dict, policy_result: dict, routing_result: 
             "輸出三個純文字短段落，禁止 Markdown 與未提供的數字，全文不得超過 450 字。"
         )
         result = _call_bedrock(prompt, system_prompt, "narrative")
+        if not result.get("ok"):
+            raise RuntimeError(f"bedrock unavailable ({result.get('fallback_reason')})")
         response = result.get("response", "")
         for forbidden in ("```", "**", "###", "##", "#", "$", "\\frac", "Saturation_Score", "capacity_vph"):
             response = response.replace(forbidden, "")
@@ -483,16 +526,35 @@ def run_commander(event: dict | None = None, session_id: str = "", sim_time: str
                 "advisories": [],
             }
 
-        advisories = []
-        for incident in incidents:
+        # A worker thread starts with an empty context, so each task re-applies the
+        # simulated-time override. Without this the workers would resolve against
+        # the global clock instead of this run's requested time.
+        effective_time = sim_clock.now_str()
+
+        def process_one(incident: object) -> dict:
             if not incident or not isinstance(incident, dict):
-                advisories.append({"event_id": "UNKNOWN", "error": "Invalid incident", "status": "failed"})
-                continue
+                return {"event_id": "UNKNOWN", "error": "Invalid incident", "status": "failed"}
             try:
-                advisories.append(_process_incident(incident))
+                with sim_clock.override(effective_time):
+                    return _process_incident(incident)
             except Exception as e:
                 import traceback
-                advisories.append({"event_id": incident.get("event_id", "?"), "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc(), "status": "failed"})
+
+                return {
+                    "event_id": incident.get("event_id", "?"),
+                    "error": f"{type(e).__name__}: {e}",
+                    "traceback": traceback.format_exc(),
+                    "status": "failed",
+                }
+
+        # Events are independent, so they run concurrently while the rate limiter
+        # keeps Bedrock calls spaced. Results are collected back in payload order.
+        if len(incidents) == 1:
+            advisories = [process_one(incidents[0])]
+        else:
+            workers = max(1, min(len(incidents), INCIDENT_MAX_WORKERS))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                advisories = list(pool.map(process_one, incidents))
 
         return {
             "status": "completed",
@@ -565,6 +627,15 @@ def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) 
 """
 
     result = _call_bedrock(prompt, system_prompt, session_id)
+    if not result.get("ok"):
+        # The consultant is advisory only, so an unavailable model degrades to a
+        # clear notice instead of surfacing the vendor error to the dashboard.
+        result["response"] = (
+            "AI 策略顧問目前無法連線，請稍後重試。"
+            "即時路網狀態、事件處置建議書與多語通報均不受影響，仍可正常使用。"
+        )
+        result["sim_time"] = current_time
+        return result
     response = result.get("response", "")
     response = re.sub(r"每\s*(?:\d+|[一二三四五六七八九十]+)\s*分鐘", "持續", response)
     for forbidden in ("```", "\\frac", "Saturation_Score", "capacity_vph", "$"):
@@ -581,7 +652,6 @@ def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) 
 
 def _call_bedrock(prompt: str, system_prompt: str, session_id: str) -> dict:
     """透過 Amazon Bedrock (Strands SDK) 回應。"""
-    import os
 
     model_id = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
     region = os.environ.get("APP_AWS_REGION", os.environ.get("AWS_REGION", "us-west-2"))
@@ -590,7 +660,19 @@ def _call_bedrock(prompt: str, system_prompt: str, session_id: str) -> dict:
         from strands import Agent
         from strands.models.bedrock import BedrockModel
 
-        model = BedrockModel(model_id=model_id, region_name=region)
+        # Respect the model's request rate before opening a new call.
+        _bedrock_rate_limiter.acquire()
+
+        # Latency scales with generated tokens, and the 60-second demo budget is
+        # the binding constraint. All prompts ask for <= 450 Chinese characters,
+        # so the cap stops runaway generation instead of truncating after the fact.
+        # Low temperature also keeps repeated Demo runs close to reproducible.
+        model = BedrockModel(
+            model_id=model_id,
+            region_name=region,
+            max_tokens=BEDROCK_MAX_TOKENS,
+            temperature=BEDROCK_TEMPERATURE,
+        )
         agent = Agent(model=model, system_prompt=system_prompt)
         result = agent(prompt)
 
@@ -599,20 +681,27 @@ def _call_bedrock(prompt: str, system_prompt: str, session_id: str) -> dict:
             "prompt": prompt,
             "response": str(result),
             "model": f"bedrock/{model_id}",
+            "ok": True,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
         }
     except ImportError:
-        return {
-            "session_id": session_id,
-            "prompt": prompt,
-            "response": "Strands SDK 未安裝，請 pip install strands-agents",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        }
+        logger.error("Strands SDK 未安裝，無法呼叫 Bedrock")
+        return _bedrock_failure(session_id, prompt, "sdk_missing")
     except Exception as e:
+        # The vendor message is logged for operators but never returned to callers,
+        # so it cannot reach an advisory, the API or the dashboard.
         logger.error(f"Bedrock 呼叫失敗: {type(e).__name__}: {e}")
-        return {
-            "session_id": session_id,
-            "prompt": prompt,
-            "response": f"Bedrock API 錯誤: {type(e).__name__}: {e}",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        }
+        return _bedrock_failure(session_id, prompt, "service_error")
+
+
+def _bedrock_failure(session_id: str, prompt: str, reason: str) -> dict:
+    """Return a redacted failure result so callers fall back deterministically."""
+
+    return {
+        "session_id": session_id,
+        "prompt": prompt,
+        "response": "",
+        "ok": False,
+        "fallback_reason": reason,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }

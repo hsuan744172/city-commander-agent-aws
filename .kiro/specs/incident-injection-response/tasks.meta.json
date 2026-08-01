@@ -1,0 +1,320 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 建立 incident response v1 套件與測試基礎": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562560741
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562574201
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562898886
+      }
+    ],
+    "1.2 實作 domain contracts、列舉、不可變模型與安全錯誤模型": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562560775
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562927194
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785563295344
+      }
+    ],
+    "1.3 實作共用 payload parser、domain validator 與 preview 雜湊": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562560834
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785563311195
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785563538572
+      }
+    ],
+    "1.4 實作三個版本化 Scenario Preset registry 與 golden fixtures": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562560863
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785563560395
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785564026355
+      }
+    ],
+    "2.1 重構 Simulation Clock common timeline、command model 與 freeze leases": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562560897
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785563314184
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785563542304
+      }
+    ],
+    "2.2 實作來源 loader、Complete Time Slice 驗證與 strict-as-of selection": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562560926
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785563317354
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785563545923
+      }
+    ],
+    "2.3 實作 Run-scoped SnapshotBundle 固定、版本與可用性證據": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562560959
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785563564751
+      },
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785564033947
+      }
+    ],
+    "3.1 實作 SOP 2/3/5/6 三值判定與 typed evidence": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562560992
+      }
+    ],
+    "3.2 實作 Road Disruption 候選、方向、穩定排序與路徑方案": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561026
+      }
+    ],
+    "3.3 實作 ETE 與 Crowd/Signal 差異化 deterministic actions": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561057
+      }
+    ],
+    "3.4 實作 CMS 多語 deterministic templates 與 facts validation": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561085
+      }
+    ],
+    "3.5 組裝純 Response Engine、Decision Trace 與 Required Result evaluator": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561143
+      }
+    ],
+    "4.1 實作 concurrency-safe Demo Session Store 與狀態交易": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561174
+      }
+    ],
+    "4.2 實作 lifespan Run Coordinator、階段計時與 deadline 封箱": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561204
+      }
+    ],
+    "4.3 實作 preset、JSON 與 upload preview API": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561241
+      }
+    ],
+    "4.4 實作 run 受理、查詢、歷程、重播與 reset API": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561275
+      }
+    ],
+    "4.5 實作 API projection、統一錯誤 envelope 與安全 redaction": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561310
+      }
+    ],
+    "5.1 實作 AI Narrative Adapter、Consistency Gate 與 fallback renderer": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561342
+      }
+    ],
+    "5.2 實作 Simulated Publish domain service 與 API": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561372
+      }
+    ],
+    "5.3 實作結構化 operational logs、metrics hooks 與敏感資訊遮罩": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561399
+      }
+    ],
+    "6.1 實作 threshold crossing/rearm detector 與 Monitoring Alert store": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561425
+      }
+    ],
+    "6.2 實作 Monitoring Alert 升級 preview、確認與天然冪等": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561477
+      }
+    ],
+    "6.3 實作 Monitoring/Clock v1 endpoints 與 dashboard bridge projection": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561508
+      }
+    ],
+    "7.1 建立 Incident v1 API client、typed view model 與 reducer": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561542
+      }
+    ],
+    "7.2 實作 preset/JSON preview、future simulation 與明確確認 UI": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561570
+      }
+    ],
+    "7.3 實作 run 受理、每秒輪詢與 60 秒進度 UI": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561600
+      }
+    ],
+    "8.1 實作多事件切換與三類差異化結果區塊": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561630
+      }
+    ],
+    "8.2 實作事件/路徑地圖與完全本地降級路網": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561686
+      }
+    ],
+    "8.3 實作最近 100 筆歷程、唯讀還原與 replay UI": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561717
+      }
+    ],
+    "8.4 實作 Simulated Publish 與 Demo Reset UI": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561744
+      }
+    ],
+    "8.5 將 v1 Incident 戰情頁、Monitoring 升級入口與既有 App 完整接線": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561776
+      }
+    ],
+    "9.1 將 Store、Coordinator、Clock、Snapshot、Engine、AI、Monitoring 與 v1 routers 接入 FastAPI lifespan": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561818
+      }
+    ],
+    "10. Checkpoint－確認所有自動測試與建置通過": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785562561862
+      }
+    ],
+    "1. 建立事件領域契約、驗證與版本化教案": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785564026407
+      }
+    ],
+    "2. 建立 Simulation Clock 與 immutable strict-as-of Snapshot": [
+      {
+        "executionId": "aca14663-375f-4433-baf1-b3c17925472e",
+        "chatSessionId": "sess_7a8d75d1-272e-4805-b53d-0934eb0a8665",
+        "timestamp": 1785564033991
+      }
+    ]
+  }
+}

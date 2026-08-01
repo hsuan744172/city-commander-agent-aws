@@ -47,7 +47,10 @@ aws s3api put-public-access-block --bucket "$S3_DATA_BUCKET" --region "$AWS_REGI
 aws s3api put-bucket-encryption --bucket "$S3_DATA_BUCKET" --region "$AWS_REGION" \
   --server-side-encryption-configuration \
   '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-aws s3 sync "$PROJECT_ROOT/data/" "${S3_DATA_URI}/" --region "$AWS_REGION"
+# Only the four reference datasets belong on S3. Incident events are supplied by
+# the operator through the upload endpoint, so live_incidents.json is excluded.
+aws s3 sync "$PROJECT_ROOT/data/" "${S3_DATA_URI}/" --region "$AWS_REGION" \
+  --exclude "live_incidents.json"
 
 aws logs create-log-group --log-group-name "$LOG_GROUP_NAME" --region "$AWS_REGION" >/dev/null 2>&1 || true
 aws logs put-retention-policy --log-group-name "$LOG_GROUP_NAME" --retention-in-days 14 --region "$AWS_REGION" >/dev/null 2>&1 || true

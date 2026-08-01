@@ -1,0 +1,23 @@
+# Normalize line endings so a contributor's core.autocrlf setting cannot break
+# the repository. Shell scripts and Dockerfiles MUST stay LF: CRLF makes them
+# unrunnable on Linux and inside the container image.
+* text=auto eol=lf
+
+*.sh text eol=lf
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.csv text eol=lf
+*.md text eol=lf
+
+# Binary assets must never be transformed.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary

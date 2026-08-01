@@ -34,25 +34,69 @@ ECS Fargate
 
 ## 功能模組
 
-1. **動態路網監測**：呈現 15 個路段的飽和度、速度、車流與異常警報。
+1. **動態路網監測**：依模擬時鐘呈現 15 個路段的飽和度、速度、車流與 A/B 級異常警報。
 2. **突發事件應變**：注入或上傳事件後，產出「交控中心建議書」JSON。
 3. **AI 策略對話**：依本地 SOP 與完整路網資料提供 What-if 決策支援。
 4. **替代路徑與 ETE**：由專用交通數學模組執行路徑篩選與恢復時間估算。
-5. **多語公眾通報**：依 SOP 產生繁中、英、日、韓公告。
+5. **多語公眾通報**：漫遊率達 30% 觸發 SOP 第 6 條，產生繁中、英、日、韓公告。
+
+### 事件處置 v1（開發中）
+
+`backend/incident_response/` 為模組二重構後的領域層，包含嚴格契約模型、共用 payload
+parser、來源驗證與 strict as-of 快照。目前僅為程式庫，尚未接上 API；以
+`INCIDENT_V1_ENABLED` feature flag 控管，預設關閉，不影響現有端點。
+規格與實作進度見 `.kiro/specs/incident-injection-response/`。
+
+## 資料來源分工
+
+| 資料 | 來源 | 說明 |
+|---|---|---|
+| `city_traffic_flow.csv` | S3 優先，本地 fallback | 路段飽和度時序 |
+| `signaling_crowd_density.csv` | S3 優先，本地 fallback | 捷運站人流密度 |
+| `road_network_geometry.json` | S3 優先，本地 fallback | 路網拓樸 |
+| `emergency_traffic_sop.txt` | S3 優先，本地 fallback | 交通應變 SOP |
+| `live_incidents.json` | **由操作者上傳** | 突發事件，不放 S3 |
+
+前四份參考資料透過 `backend/data_source.py` 解析：設定 `S3_DATA_BUCKET` 時優先讀
+S3 並快取到本機，讀取失敗（無 bucket、無權限、物件不存在）會自動退回 `data/` 目錄，
+服務不中斷。目前來源狀態可由 `GET /api/health` 的 `data_source` 欄位查看。
+
+突發事件走 `POST /api/incidents/upload`，格式為事件陣列或含 `incidents` 的物件；
+`data/live_incidents.json` 僅為範例檔，部署腳本已將它排除在 S3 同步之外。
+
+### 60 秒預算
+
+競賽要求 60 秒內產出結果。事件之間併發處理，Bedrock 呼叫由 token bucket 依
+`BEDROCK_MIN_CALL_INTERVAL` 間隔送出，以符合基礎模型約每秒一次的呼叫限制；
+`BEDROCK_MAX_TOKENS` 同時限制輸出長度以壓低延遲。實測 3 筆事件約 27 秒完成。
 
 ## 主要端點
 
 | 方法 | 路徑 | 用途 |
 |---|---|---|
 | GET | `/api/health` | 容器與 ALB 健康檢查 |
-| GET | `/api/status` | 最新完整路網狀態與自動建議 |
-| GET | `/api/trend` | 路網時序趨勢 |
+| GET | `/api/status` | 依模擬時鐘的路網當下狀態與自動建議 |
+| GET | `/api/trend` | 路網時序趨勢（預設不外洩未來資料） |
+| GET | `/api/network` | 路網靜態幾何（容量、路口、替代道路） |
+| GET | `/api/timeline` | 共同時間軸所有時間點與目前索引 |
+| GET | `/api/clock` | 模擬時鐘狀態與時間軸 |
+| POST | `/api/clock` | 調整時鐘（mode / sim_time / interval / loop） |
+| POST | `/api/clock/advance` | 相對前進或後退（steps / minutes） |
+| POST | `/api/clock/pause` | 暫停（凍結模擬時間） |
+| POST | `/api/clock/resume` | 繼續播放 |
+| POST | `/api/clock/reset` | 回到環境變數初始設定 |
 | POST | `/api/incidents` | 處理事件並產生交控建議書 |
 | POST | `/api/incidents/upload` | 上傳事件 JSON |
 | POST | `/api/what-if` | Bedrock 情境問答 |
-| WS | `/ws/dashboard` | Dashboard 即時推播 |
+| WS | `/ws/dashboard` | 模擬時間推進時主動推播狀態 |
 
-FastAPI 互動文件位於 `/docs`。
+所有端點都支援 `?ts=YYYY-MM-DD HH:MM` 單次時間覆寫，不影響全域時鐘。FastAPI 互動文件位於 `/docs`。
+
+### 模擬時間模型
+
+模擬時鐘為離散式：只會落在 `city_traffic_flow.csv` 與 `signaling_crowd_density.csv`
+**同時**具有完整切片的共同時間軸上（目前為 14 格，17:00 至 23:15）。播放時每一個實際秒
+前進一格，不做插值，也不會提前使用未來資料。
 
 ## 本機開發
 
@@ -143,15 +187,18 @@ curl -fsS -H 'Content-Type: application/json' \
 city-commander-agent/
 ├── backend/
 │   ├── main.py                  # FastAPI、API、WebSocket、前端靜態服務
+│   ├── sim_clock.py             # 離散模擬時鐘與共同時間軸
 │   ├── agents/
 │   │   ├── architect.py         # 總指揮與 What-if
 │   │   ├── policy.py            # SOP 驗證
 │   │   ├── router.py            # 路由 Agent
 │   │   ├── comms.py             # 多語通報 Agent
 │   │   └── traffic_math.py      # 唯一數值計算模組
+│   ├── incident_response/       # 事件處置 v1 領域層（feature flag 控管）
 │   └── Dockerfile               # React + FastAPI 正式單一映像
 ├── frontend/                    # React Dashboard
 ├── data/                        # SOP、路網、流量與人流資料
+├── tests/                       # pytest：契約、parser、時鐘、快照、教案
 ├── deployment/iam/              # 受管服務信任與 Bedrock IAM policy
 ├── scripts/
 │   └── deploy-ecs-fargate.sh    # 正式 AWS 部署腳本
