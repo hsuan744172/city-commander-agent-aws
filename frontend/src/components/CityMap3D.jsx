@@ -314,73 +314,50 @@ export default function CityMap3D({
 
     map.on("load", () => {
       try {
-      // --- 3D 建築圖層 ---
-      const layers = map.getStyle().layers;
-      let labelLayerId;
-      for (let i = 0; i < layers.length; i++) {
-        if (layers[i].type === "symbol" && layers[i].layout?.["text-field"]) {
-          labelLayerId = layers[i].id;
-          break;
+      // --- 3D 建築圖層（非關鍵增強，失敗不得阻斷路網） ---
+      try {
+        const layers = map.getStyle().layers || [];
+        const labelLayer = layers.find(
+          (layer) => layer.type === "symbol" && layer.layout?.["text-field"]
+        );
+
+        // bright 樣式已提供 openmaptiles source，直接重用，避免重複 source ID。
+        if (map.getSource("openmaptiles") && !map.getLayer("3d-buildings")) {
+          map.addLayer(
+            {
+              id: "3d-buildings",
+              source: "openmaptiles",
+              "source-layer": "building",
+              type: "fill-extrusion",
+              minzoom: 14,
+              filter: ["!=", ["get", "hide_3d"], true],
+              paint: {
+                "fill-extrusion-color": [
+                  "interpolate",
+                  ["linear"],
+                  ["get", "render_height"],
+                  0, "#e0e0e0",
+                  50, "#c0c8d4",
+                  150, "#8fa4bd",
+                  300, "#6b8cae",
+                ],
+                "fill-extrusion-height": [
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  14, 0,
+                  15.5, ["get", "render_height"],
+                ],
+                "fill-extrusion-base": ["get", "render_min_height"],
+                "fill-extrusion-opacity": 0.75,
+              },
+            },
+            labelLayer?.id
+          );
         }
+      } catch (error) {
+        console.warn("[CityMap3D] 3D buildings unavailable; continuing with roads:", error);
       }
-
-      // 隱藏底圖所有 symbol 圖層（POI、路名、門牌）
-      for (const layer of layers) {
-        if (layer.type === "symbol") {
-          map.setLayoutProperty(layer.id, "visibility", "none");
-        }
-        // 隱藏底圖自帶的 3D 建築圖層（避免與我們的建築重疊）
-        if (layer.type === "fill-extrusion") {
-          map.setLayoutProperty(layer.id, "visibility", "none");
-        }
-        // 隱藏底圖道路線
-        if (layer.type === "line") {
-          map.setLayoutProperty(layer.id, "visibility", "none");
-        }
-        // 把底圖的 fill 圖層（地面色塊）改成深色
-        if (layer.type === "fill") {
-          map.setPaintProperty(layer.id, "fill-color", "#121218");
-        }
-      }
-
-      // 設定地圖背景為深色
-      map.setPaintProperty("background", "background-color", "#0d0d12");
-
-      map.addSource("openfreemap", {
-        url: "https://tiles.openfreemap.org/planet",
-        type: "vector",
-      });
-
-      map.addLayer(
-        {
-          id: "3d-buildings",
-          source: "openfreemap",
-          "source-layer": "building",
-          type: "fill-extrusion",
-          minzoom: 14,
-          filter: ["!=", ["get", "hide_3d"], true],
-          paint: {
-            "fill-extrusion-color": [
-              "interpolate",
-              ["linear"],
-              ["get", "render_height"],
-              0, "#2c2c34",
-              30, "#33333b",
-              80, "#3a3a44",
-              200, "#44444e",
-            ],
-            "fill-extrusion-height": [
-              "interpolate",
-              ["linear"],
-              ["zoom"],
-              14, 0,
-              15.5, ["get", "render_height"],
-            ],
-            "fill-extrusion-base": 0,
-          },
-        },
-        labelLayerId
-      );
 
       // --- 路網資料源與圖層 ---
       map.addSource("traffic-roads", {
