@@ -13,6 +13,11 @@ Endpoints:
   GET  /api/status         → 路網當下狀態 (依模擬時鐘)
   GET  /api/trend          → 截至當下的飽和度時序
   GET  /api/network        → 路網靜態幾何
+  GET  /api/cameras        → 全路段即時影像攝影機對照表
+  GET  /api/cameras/{id}   → 單一路段鄰近即時影像攝影機
+  GET  /api/cameras/{id}/{cam}/stream   → MJPEG 代理串流
+  GET  /api/cameras/{id}/{cam}/snapshot → 單張畫面
+  GET  /api/cameras/{id}/{cam}/frame    → 畫面年齡與上游狀態
   GET  /api/timeline       → 資料集所有時間點
   GET  /api/clock          → 模擬時鐘狀態
   POST /api/clock          → 調整時鐘 (mode / sim_time / speed / interval / loop)
@@ -44,13 +49,13 @@ from dotenv import load_dotenv
 # 因為模擬時鐘在載入時就會讀取 SIM_CLOCK_* 環境變數。
 load_dotenv()
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, UploadFile  # noqa: E402
+from fastapi import FastAPI, Query, Response, WebSocket, WebSocketDisconnect, UploadFile  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-from fastapi.responses import JSONResponse  # noqa: E402
+from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, ValidationError  # noqa: E402
 
-from backend import sim_clock  # noqa: E402
+from backend import camera_stream, sim_clock  # noqa: E402
 from backend.agents.architect import run_commander  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -87,6 +92,7 @@ async def lifespan(app: FastAPI):
             pusher.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await pusher
+        await camera_stream.shutdown()
         logger.info("City Commander Agent 關閉")
 
 
@@ -477,6 +483,189 @@ async def road_network():
         segments = json.load(f)
 
     return {"total_segments": len(segments), "segments": segments}
+
+
+# --- 路段即時影像 -----------------------------------------------------------
+
+# 對照表由 scripts/build_camera_map.py 離線產生（來源：twipcam 公開 CCTV 清單）。
+# 靜態資料，程序啟動後只讀一次；純粹供畫面呈現，不參與 SOP 判定與 ETE 計算。
+_CAMERA_MAP: dict | None = None
+
+
+def _load_camera_map() -> dict:
+    global _CAMERA_MAP
+    if _CAMERA_MAP is None:
+        json_path = DATA_DIR / "segment_cameras.json"
+        if not json_path.exists():
+            logger.warning("找不到 segment_cameras.json，即時影像功能停用")
+            _CAMERA_MAP = {"segments": {}}
+        else:
+            with open(json_path, encoding="utf-8") as f:
+                _CAMERA_MAP = json.load(f)
+    return _CAMERA_MAP
+
+
+def _camera_source(data: dict) -> dict:
+    return {
+        "source": data.get("source", ""),
+        "source_page": data.get("source_page", ""),
+        # 直播影像的實際提供者（快照與直播來源不同）
+        "stream_source": data.get("stream_source", ""),
+        "generated_at": data.get("generated_at", ""),
+    }
+
+
+@app.get("/api/cameras")
+async def all_cameras():
+    """全路段 → 鄰近即時影像攝影機對照表。靜態資料，不隨模擬時鐘變動。"""
+    data = _load_camera_map()
+    segments = data.get("segments", {})
+    return {
+        **_camera_source(data),
+        "max_distance_m": data.get("max_distance_m"),
+        "total_segments": len(segments),
+        "segments": segments,
+    }
+
+
+@app.get("/api/cameras/{segment_id}")
+async def segment_cameras(segment_id: str):
+    """
+    單一路段的鄰近即時影像攝影機清單，依「路名命中 → 距離」排序。
+    前端以 snapshot_url 定時重抓快照模擬串流。
+    """
+    data = _load_camera_map()
+    entry = (data.get("segments") or {}).get(segment_id)
+
+    if entry is None:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": f"路段 {segment_id} 無攝影機對照資料",
+                "segment_id": segment_id,
+                "cameras": [],
+            },
+        )
+
+    return {
+        "segment_id": segment_id,
+        "road_name": entry.get("road_name", ""),
+        **_camera_source(data),
+        "total": len(entry.get("cameras", [])),
+        "cameras": entry.get("cameras", []),
+    }
+
+
+def _find_camera(segment_id: str, camera_id: str) -> dict | None:
+    """
+    從對照表查出指定鏡頭。只有白名單內的鏡頭能被代理，
+    上游網址不接受呼叫端指定，避免代理端點變成 SSRF 跳板。
+    """
+    entry = (_load_camera_map().get("segments") or {}).get(segment_id)
+    if not entry:
+        return None
+    for cam in entry.get("cameras", []):
+        if cam.get("camera_id") == camera_id:
+            return cam
+    return None
+
+
+def _camera_ref(segment_id: str, cam: dict) -> camera_stream.CameraRef:
+    return camera_stream.CameraRef(
+        segment_id=segment_id,
+        camera_id=cam["camera_id"],
+        url=cam["snapshot_url"],
+        name=cam.get("name", ""),
+    )
+
+
+@app.get("/api/cameras/{segment_id}/{camera_id}/stream")
+async def camera_mjpeg_stream(segment_id: str, camera_id: str):
+    """
+    以 multipart/x-mixed-replace 代理該鏡頭畫面，前端一個 <img> 即可持續顯示。
+
+    上游只有定時更新的 JPEG 快照，這裡把輪詢轉封裝成串流：同一支鏡頭不論幾個
+    前端在看都只向上游抓一次，前端也不必直連第三方網域。
+    """
+    cam = _find_camera(segment_id, camera_id)
+    if cam is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"路段 {segment_id} 無鏡頭 {camera_id}"},
+        )
+
+    ref = _camera_ref(segment_id, cam)
+
+    # 先確認取得到畫面，才回 200 串流；否則回 502 讓前端顯示無訊號
+    try:
+        await camera_stream.prime(ref)
+    except camera_stream.UpstreamError as e:
+        logger.warning(f"街景來源不可用 {ref.key}: {e}")
+        return JSONResponse(
+            status_code=502,
+            content={"error": "影像目前無法取得", "camera_id": camera_id, "detail": str(e)},
+        )
+
+    return StreamingResponse(
+        camera_stream.stream(ref),
+        media_type=camera_stream.MJPEG_CONTENT_TYPE,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            # 反向代理若做緩衝會讓串流卡住
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/cameras/{segment_id}/{camera_id}/snapshot")
+async def camera_snapshot(segment_id: str, camera_id: str):
+    """單張畫面。前端暫停時顯示這個，也作為不支援 MJPEG 時的退路。"""
+    cam = _find_camera(segment_id, camera_id)
+    if cam is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"路段 {segment_id} 無鏡頭 {camera_id}"},
+        )
+
+    try:
+        frame = await camera_stream.prime(_camera_ref(segment_id, cam))
+    except camera_stream.UpstreamError as e:
+        return JSONResponse(
+            status_code=502,
+            content={"error": "影像目前無法取得", "detail": str(e)},
+        )
+
+    return Response(
+        content=frame.data,
+        media_type=frame.content_type,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/cameras/{segment_id}/{camera_id}/frame")
+async def camera_frame_info(segment_id: str, camera_id: str):
+    """
+    畫面實際狀態：上游宣告的拍攝時間與距今秒數。
+
+    <img> 讀不到上游的 Last-Modified，只有後端拿得到。前端據此顯示畫面年齡，
+    而不是不分新舊一律標成 LIVE — 實測部分公開鏡頭的快照已數小時未更新。
+    """
+    cam = _find_camera(segment_id, camera_id)
+    if cam is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"路段 {segment_id} 無鏡頭 {camera_id}"},
+        )
+
+    info = await camera_stream.frame_info(_camera_ref(segment_id, cam))
+    return {
+        "segment_id": segment_id,
+        "camera_id": camera_id,
+        "name": cam.get("name", ""),
+        "distance_m": cam.get("distance_m"),
+        **info,
+    }
 
 
 # --- 事件與問答 -------------------------------------------------------------

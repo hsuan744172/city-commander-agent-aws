@@ -63,7 +63,7 @@ export default function IncidentMap({ advisory }) {
 
   if (!advisory || advisory.error) {
     return (
-      <div className="h-full rounded-xl overflow-hidden border border-gray-200">
+      <div className="h-full rounded-lg overflow-hidden border border-[var(--border)]">
         <MapContainer center={center} zoom={15} className="h-full w-full" scrollWheelZoom={true}>
           <TileLayer url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" attribution="&copy; CartoDB" />
         </MapContainer>
@@ -83,7 +83,7 @@ export default function IncidentMap({ advisory }) {
   const secondaryLines = (primary?.secondary_routes || []).map((r) => SEGMENT_COORDS[r.segment_id]).filter(Boolean);
 
   return (
-    <div className="h-full rounded-xl overflow-hidden border border-gray-200">
+    <div className="h-full rounded-lg overflow-hidden border border-[var(--border)]">
       <MapContainer center={incidentCoord} zoom={16} className="h-full w-full" scrollWheelZoom={true}>
         <TileLayer url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" attribution="&copy; CartoDB" />
         <FlyTo center={incidentCoord} />

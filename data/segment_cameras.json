@@ -1,0 +1,746 @@
+{
+  "_comment": "由 scripts/build_camera_map.py 產生，請勿手動編輯。僅供畫面呈現，不參與 SOP 判定與 ETE 計算。",
+  "source": "twipcam.com (公開 CCTV 整合平台)",
+  "source_page": "https://tw.live/city/taipeicity/",
+  "source_api": "https://www.twipcam.com/api/v1/cam-list.json",
+  "stream_source": "臺北市政府交通局 CCTV (Low-Latency HLS)",
+  "generated_at": "2026-08-01 14:03",
+  "max_distance_m": 900.0,
+  "segments": {
+    "RD_TPE_001": {
+      "road_name": "忠孝東路四段",
+      "cameras": [
+        {
+          "camera_id": "tpe-000129",
+          "name": "129-忠孝光復",
+          "lat": 25.0414,
+          "lon": 121.5577,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000129.jpg",
+          "distance_m": 17,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/8781a081-e6bc-4464-b311-261650af6a07/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000352",
+          "name": "352-忠孝-延吉路口",
+          "lat": 25.0414,
+          "lon": 121.5545,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000352.jpg",
+          "distance_m": 22,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv5.gov.taipei/NVR/2c2a1693-f00b-4e24-ae50-3d366169c6cc/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000384",
+          "name": "384忠孝東路-逸仙路(巨蛋辦公樓)",
+          "lat": 25.0419,
+          "lon": 121.5614,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000384.jpg",
+          "distance_m": 60,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/cc4d496e-f956-4acd-81b9-f7ca7580694f/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000383",
+          "name": "383-忠孝東路-逸仙路",
+          "lat": 25.0412,
+          "lon": 121.5616,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000383.jpg",
+          "distance_m": 69,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/36340990-7f45-4623-a4f5-c5026376e815/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_002": {
+      "road_name": "光復南路",
+      "cameras": [
+        {
+          "camera_id": "tpe-000329",
+          "name": "329-光復南路與市民大道口",
+          "lat": 25.0449,
+          "lon": 121.5577,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000329.jpg",
+          "distance_m": 0,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/1953aebe-6a46-42ff-ab94-258d9f178e86/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000129",
+          "name": "129-忠孝光復",
+          "lat": 25.0414,
+          "lon": 121.5577,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000129.jpg",
+          "distance_m": 28,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/8781a081-e6bc-4464-b311-261650af6a07/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000035",
+          "name": "035-市民快光復匝道",
+          "lat": 25.0449,
+          "lon": 121.5569,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000035.jpg",
+          "distance_m": 81,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv3.gov.taipei/NVR/d96249b4-9e50-4a2c-8158-f90322a7e452/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000382",
+          "name": "382忠孝東路-光復南路(巨蛋體育館)",
+          "lat": 25.042,
+          "lon": 121.5584,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000382.jpg",
+          "distance_m": 81,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/4ad0b078-a5d3-4fa5-ae4d-c1b7a7ce7d7a/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_003": {
+      "road_name": "基隆路一段",
+      "cameras": [
+        {
+          "camera_id": "tpe-000196",
+          "name": "196-基隆路北往南混合車道4(基隆松壽)",
+          "lat": 25.0355,
+          "lon": 121.5612,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000196.jpg",
+          "distance_m": 10,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/7c6adde0-a7f6-47aa-88c5-fc25ed5da26e/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000198",
+          "name": "198-基隆路南往北混合車道2(基隆松壽)",
+          "lat": 25.0356,
+          "lon": 121.561,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000198.jpg",
+          "distance_m": 15,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/99e9d02a-ad9c-49ec-acda-3d774d46be84/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000197",
+          "name": "197-基隆路南往北混合車道1(基隆松壽)",
+          "lat": 25.0357,
+          "lon": 121.5611,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000197.jpg",
+          "distance_m": 22,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/d2db9b90-82a0-468b-9684-aa8d861195b9/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000195",
+          "name": "195-基隆路北往南混合車道3(基隆松壽)",
+          "lat": 25.0356,
+          "lon": 121.5613,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000195.jpg",
+          "distance_m": 23,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/77ae0f9d-30de-474a-b3a6-d5ee27560a11/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_004": {
+      "road_name": "市民大道四段",
+      "cameras": [
+        {
+          "camera_id": "tpe-000329",
+          "name": "329-光復南路與市民大道口",
+          "lat": 25.0449,
+          "lon": 121.5577,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000329.jpg",
+          "distance_m": 0,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/1953aebe-6a46-42ff-ab94-258d9f178e86/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000421",
+          "name": "421-市民大道四段-敦化南路1段(橋下)",
+          "lat": 25.045,
+          "lon": 121.5491,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000421.jpg",
+          "distance_m": 15,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv3.gov.taipei/NVR/c0728f98-57e7-4819-9490-f69d5e65798c/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000029",
+          "name": "029-市民快敦化",
+          "lat": 25.0449,
+          "lon": 121.549,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000029.jpg",
+          "distance_m": 20,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv3.gov.taipei/NVR/093a6f85-0751-44aa-8aed-a13c6546e11b/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000317",
+          "name": "317-復興南路與市民大道口",
+          "lat": 25.0444,
+          "lon": 121.5438,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000317.jpg",
+          "distance_m": 63,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/14ddba4d-0c90-4be8-adaa-4246f898cf17/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_005": {
+      "road_name": "仁愛路四段",
+      "cameras": [
+        {
+          "camera_id": "tpe-000173",
+          "name": "173-仁愛敦化(北側)",
+          "lat": 25.0383,
+          "lon": 121.5487,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000173.jpg",
+          "distance_m": 55,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/6004d9d4-21cf-4473-9724-214528755f4f/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000175",
+          "name": "175-仁愛敦化(東側)",
+          "lat": 25.0379,
+          "lon": 121.5494,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000175.jpg",
+          "distance_m": 70,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/2d6b1ba2-b2c0-46b3-b406-4c8a7f574d61/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000132",
+          "name": "132-仁愛光復",
+          "lat": 25.0377,
+          "lon": 121.5578,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000132.jpg",
+          "distance_m": 90,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/123167ee-dbf0-4ff7-a936-8a242441a60f/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000174",
+          "name": "174-仁愛敦化(西側)",
+          "lat": 25.0379,
+          "lon": 121.5482,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000174.jpg",
+          "distance_m": 121,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/98758b7b-e36e-4caa-8108-742c197335e4/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_006": {
+      "road_name": "敦化南路一段",
+      "cameras": [
+        {
+          "camera_id": "tpe-000421",
+          "name": "421-市民大道四段-敦化南路1段(橋下)",
+          "lat": 25.045,
+          "lon": 121.5491,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000421.jpg",
+          "distance_m": 15,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv3.gov.taipei/NVR/c0728f98-57e7-4819-9490-f69d5e65798c/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000029",
+          "name": "029-市民快敦化",
+          "lat": 25.0449,
+          "lon": 121.549,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000029.jpg",
+          "distance_m": 20,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv3.gov.taipei/NVR/093a6f85-0751-44aa-8aed-a13c6546e11b/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000345",
+          "name": "345-忠孝東-敦化南路口",
+          "lat": 25.0415,
+          "lon": 121.5489,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000345.jpg",
+          "distance_m": 35,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv3.gov.taipei/NVR/12ff3faa-1f1c-4f71-b54b-1a4c97d6b783/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000173",
+          "name": "173-仁愛敦化(北側)",
+          "lat": 25.0383,
+          "lon": 121.5487,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000173.jpg",
+          "distance_m": 55,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/6004d9d4-21cf-4473-9724-214528755f4f/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_007": {
+      "road_name": "松高路",
+      "cameras": [
+        {
+          "camera_id": "tpe-000139",
+          "name": "139-市府東北(松高松智)",
+          "lat": 25.0389,
+          "lon": 121.5653,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000139.jpg",
+          "distance_m": 268,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/77c0f6ad-af3c-4bb8-9341-4318284cf6fb/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000140",
+          "name": "140-市府西北(松高市府)",
+          "lat": 25.0389,
+          "lon": 121.5638,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000140.jpg",
+          "distance_m": 268,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/f0a5bf25-956f-4343-bed3-59df341071ea/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000133",
+          "name": "133-松高松智",
+          "lat": 25.0392,
+          "lon": 121.5656,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000133.jpg",
+          "distance_m": 300,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/4a797112-4b04-496c-a786-6b74f693461d/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000180",
+          "name": "180-基隆路北往南主車道4(基隆松高)",
+          "lat": 25.0392,
+          "lon": 121.5637,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000180.jpg",
+          "distance_m": 302,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/3467d9ba-2cb9-443d-8e5a-dbb03ea2b664/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_008": {
+      "road_name": "延吉街",
+      "cameras": [
+        {
+          "camera_id": "tpe-000267",
+          "name": "267-市民高架道路(往東延吉街上方)",
+          "lat": 25.0444,
+          "lon": 121.5525,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000267.jpg",
+          "distance_m": 161,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv5.gov.taipei/NVR/6e044566-606e-4926-a81f-97bfb45e677a/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000352",
+          "name": "352-忠孝-延吉路口",
+          "lat": 25.0414,
+          "lon": 121.5545,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000352.jpg",
+          "distance_m": 243,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv5.gov.taipei/NVR/2c2a1693-f00b-4e24-ae50-3d366169c6cc/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000175",
+          "name": "175-仁愛敦化(東側)",
+          "lat": 25.0379,
+          "lon": 121.5494,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000175.jpg",
+          "distance_m": 280,
+          "matches_road_name": false,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/2d6b1ba2-b2c0-46b3-b406-4c8a7f574d61/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000345",
+          "name": "345-忠孝東-敦化南路口",
+          "lat": 25.0415,
+          "lon": 121.5489,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000345.jpg",
+          "distance_m": 323,
+          "matches_road_name": false,
+          "stream_url": "https://jtmctrafficcctv3.gov.taipei/NVR/12ff3faa-1f1c-4f71-b54b-1a4c97d6b783/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_009": {
+      "road_name": "基隆路地下道",
+      "cameras": [
+        {
+          "camera_id": "tpe-000177",
+          "name": "177-基隆路北往南主車道1(基隆忠孝)",
+          "lat": 25.0413,
+          "lon": 121.5644,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000177.jpg",
+          "distance_m": 402,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/8c4e00a3-cda1-4167-8218-b4b391d864cf/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000200",
+          "name": "200-基隆路南往北混合車道4(基隆忠孝)",
+          "lat": 25.0413,
+          "lon": 121.5644,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000200.jpg",
+          "distance_m": 402,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/56f4103a-09a2-424d-937e-d440a7725808/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000179",
+          "name": "179-基隆路北往南主車道3(基隆忠孝)",
+          "lat": 25.0411,
+          "lon": 121.5643,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000179.jpg",
+          "distance_m": 406,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/b5861dc9-de0b-455a-8d5b-a3439e225388/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000178",
+          "name": "178-基隆路北往南主車道2(基隆忠孝)機 1",
+          "lat": 25.041,
+          "lon": 121.5643,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000178.jpg",
+          "distance_m": 413,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/3ed6a7e1-fa75-486c-b22f-f8c15f50a513/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_010": {
+      "road_name": "市府路",
+      "cameras": [
+        {
+          "camera_id": "tpe-000137",
+          "name": "137-市府西南(松壽市府)",
+          "lat": 25.0361,
+          "lon": 121.5638,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000137.jpg",
+          "distance_m": 54,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/de868bf6-b954-447d-8c11-c5348092a1aa/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000140",
+          "name": "140-市府西北(松高市府)",
+          "lat": 25.0389,
+          "lon": 121.5638,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000140.jpg",
+          "distance_m": 54,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/f0a5bf25-956f-4343-bed3-59df341071ea/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000138",
+          "name": "138-市府東南(松壽松智)",
+          "lat": 25.0361,
+          "lon": 121.5652,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000138.jpg",
+          "distance_m": 177,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/dea1a817-634b-4173-a860-ea420d5a7989/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000139",
+          "name": "139-市府東北(松高松智)",
+          "lat": 25.0389,
+          "lon": 121.5653,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000139.jpg",
+          "distance_m": 187,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/77c0f6ad-af3c-4bb8-9341-4318284cf6fb/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_011": {
+      "road_name": "松壽路",
+      "cameras": [
+        {
+          "camera_id": "tpe-000300",
+          "name": "300-基隆松壽限高器",
+          "lat": 25.0347,
+          "lon": 121.5604,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000300.jpg",
+          "distance_m": 71,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv5.gov.taipei/NVR/a2368200-43b5-4c59-9a6c-5c832daf0fe0/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000196",
+          "name": "196-基隆路北往南混合車道4(基隆松壽)",
+          "lat": 25.0355,
+          "lon": 121.5612,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000196.jpg",
+          "distance_m": 78,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/7c6adde0-a7f6-47aa-88c5-fc25ed5da26e/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000198",
+          "name": "198-基隆路南往北混合車道2(基隆松壽)",
+          "lat": 25.0356,
+          "lon": 121.561,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000198.jpg",
+          "distance_m": 90,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/99e9d02a-ad9c-49ec-acda-3d774d46be84/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000195",
+          "name": "195-基隆路北往南混合車道3(基隆松壽)",
+          "lat": 25.0356,
+          "lon": 121.5613,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000195.jpg",
+          "distance_m": 91,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/77ae0f9d-30de-474a-b3a6-d5ee27560a11/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_012": {
+      "road_name": "敦化南路二段",
+      "cameras": [
+        {
+          "camera_id": "tpe-000176",
+          "name": "176-仁愛敦化(南側)",
+          "lat": 25.0373,
+          "lon": 121.5488,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000176.jpg",
+          "distance_m": 46,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/50b9d11a-aa42-43a4-bb5e-55d44a21e5d9/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000175",
+          "name": "175-仁愛敦化(東側)",
+          "lat": 25.0379,
+          "lon": 121.5494,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000175.jpg",
+          "distance_m": 49,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/2d6b1ba2-b2c0-46b3-b406-4c8a7f574d61/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000173",
+          "name": "173-仁愛敦化(北側)",
+          "lat": 25.0383,
+          "lon": 121.5487,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000173.jpg",
+          "distance_m": 55,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/6004d9d4-21cf-4473-9724-214528755f4f/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000174",
+          "name": "174-仁愛敦化(西側)",
+          "lat": 25.0379,
+          "lon": 121.5482,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000174.jpg",
+          "distance_m": 110,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/98758b7b-e36e-4caa-8108-742c197335e4/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_013": {
+      "road_name": "信義路五段",
+      "cameras": [
+        {
+          "camera_id": "tpe-000284",
+          "name": "284-信義路-莊敬路口",
+          "lat": 25.033,
+          "lon": 121.5613,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000284.jpg",
+          "distance_m": 59,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv5.gov.taipei/NVR/8af82abb-9f11-4ecd-8469-5126f4a480aa/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000128",
+          "name": "128-信義松智東南角",
+          "lat": 25.0329,
+          "lon": 121.5655,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000128.jpg",
+          "distance_m": 67,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/0b0ea88c-4ac6-4e76-b1d0-6868c0354cf3/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000277",
+          "name": "277-信義路五段7號(台北101大樓)",
+          "lat": 25.0338,
+          "lon": 121.5647,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000277.jpg",
+          "distance_m": 78,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv5.gov.taipei/NVR/b3ab732e-915d-4f43-a4f5-3d8584816dde/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000075",
+          "name": "075-信義松仁",
+          "lat": 25.0326,
+          "lon": 121.5682,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000075.jpg",
+          "distance_m": 105,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv5.gov.taipei/NVR/206fb4c7-ead7-48aa-9581-c54123ad1076/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_014": {
+      "road_name": "松智路",
+      "cameras": [
+        {
+          "camera_id": "tpe-000128",
+          "name": "128-信義松智東南角",
+          "lat": 25.0329,
+          "lon": 121.5655,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000128.jpg",
+          "distance_m": 310,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/0b0ea88c-4ac6-4e76-b1d0-6868c0354cf3/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000138",
+          "name": "138-市府東南(松壽松智)",
+          "lat": 25.0361,
+          "lon": 121.5652,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000138.jpg",
+          "distance_m": 335,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/dea1a817-634b-4173-a860-ea420d5a7989/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000133",
+          "name": "133-松高松智",
+          "lat": 25.0392,
+          "lon": 121.5656,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000133.jpg",
+          "distance_m": 419,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/4a797112-4b04-496c-a786-6b74f693461d/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000139",
+          "name": "139-市府東北(松高松智)",
+          "lat": 25.0389,
+          "lon": 121.5653,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000139.jpg",
+          "distance_m": 419,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv2.gov.taipei/NVR/77c0f6ad-af3c-4bb8-9341-4318284cf6fb/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    },
+    "RD_TPE_015": {
+      "road_name": "復興南路一段",
+      "cameras": [
+        {
+          "camera_id": "tpe-000262",
+          "name": "262-忠孝東路-復興南路口",
+          "lat": 25.0415,
+          "lon": 121.5439,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000262.jpg",
+          "distance_m": 44,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv5.gov.taipei/NVR/65e7955b-9f7b-4886-9650-60adc632c0bb/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000317",
+          "name": "317-復興南路與市民大道口",
+          "lat": 25.0444,
+          "lon": 121.5438,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000317.jpg",
+          "distance_m": 54,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/14ddba4d-0c90-4be8-adaa-4246f898cf17/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000319",
+          "name": "319-復興南路-仁愛三段",
+          "lat": 25.0378,
+          "lon": 121.5436,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000319.jpg",
+          "distance_m": 428,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/fe6937d3-711f-4a1f-a0d2-275db5d04bde/live.m3u8",
+          "stream_type": "hls"
+        },
+        {
+          "camera_id": "tpe-000316",
+          "name": "316-復興北路與南京東路口",
+          "lat": 25.0519,
+          "lon": 121.544,
+          "snapshot_url": "https://c01.twipcam.com/cam/snapshot/tpe-000316.jpg",
+          "distance_m": 780,
+          "matches_road_name": true,
+          "stream_url": "https://jtmctrafficcctv4.gov.taipei/NVR/6ac674e1-fcde-4e47-8bb7-70408d31f1e6/live.m3u8",
+          "stream_type": "hls"
+        }
+      ]
+    }
+  }
+}

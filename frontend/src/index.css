@@ -1,1 +1,91 @@
 @import "tailwindcss";
+
+/*
+ * City Commander Design Tokens
+ * Color palette from: https://www.realtimecolors.com/?colors=061d17-fafefd-3bd9a3-9f8be9-ba56de
+ * Font: Inter
+ * Corner radius: Material 3 scale
+ */
+
+@theme {
+  /* Tight corner radius scale */
+  --radius-none: 0px;
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-xl: 6px;
+  --radius-2xl: 8px;
+  --radius-full: 9999px;
+  --radius: 2px;
+}
+
+/*
+ * Light theme (default)
+ *
+ * Text:       #061E18
+ * Background: #FBFEFD
+ * Primary:    #3AD9A2
+ * Secondary:  #A08BE9
+ * Accent:     #BA56DE
+ */
+:root {
+  --background: #FAFCFB;
+  --foreground: #1A2B26;
+
+  --card: #FFFFFF;
+  --card-foreground: #1A2B26;
+
+  --primary: #4AB88E;
+  --primary-foreground: #FFFFFF;
+
+  --secondary: #F3F0FB;
+  --secondary-foreground: #1A2B26;
+
+  --muted: #F4F6F5;
+  --muted-foreground: #5F7A71;
+
+  --accent: #F5EDFA;
+  --accent-foreground: #1A2B26;
+
+  --destructive: #D94F4F;
+
+  --border: #E4EBE8;
+  --input: #E4EBE8;
+  --ring: #4AB88E;
+
+  --sidebar-background: #F7F9F8;
+  --sidebar-foreground: #1A2B26;
+  --sidebar-accent: #EDF2F0;
+  --sidebar-accent-foreground: #1A2B26;
+  --sidebar-border: #E4EBE8;
+
+  /* Chart colors — desaturated */
+  --chart-1: #4AB88E;
+  --chart-2: #8B7ACC;
+  --chart-3: #A465BF;
+  --chart-4: #3A9E74;
+  --chart-5: #6E55B0;
+
+  /* Status tokens — functional, muted */
+  --status-success: #3A9E74;
+  --status-running: #4AB88E;
+  --status-warning: #C8922A;
+  --status-error: #D94F4F;
+  --status-idle: #B8942A;
+  --status-neutral: #7A9189;
+  --status-info: #8B7ACC;
+}
+
+/*
+ * Base styles
+ */
+* {
+  border-color: var(--border);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
