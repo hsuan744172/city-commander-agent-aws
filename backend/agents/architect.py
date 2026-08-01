@@ -225,10 +225,9 @@ def _process_incident(incident: dict) -> dict:
 
 def _generate_special_advisory(sop_type: str, incident: dict, context: dict) -> dict:
     """
-    呼叫 LLM 根據 SOP 原文 + 即時數據，動態產出 SOP 3/5 的特殊處置方案。
-    若 LLM 不可用則 fallback 到基本結構。
+    透過 Amazon Bedrock Claude 根據 SOP 原文與即時數據，動態產出 SOP 3/5 的特殊處置方案。
+    若 Bedrock 不可用則 fallback 到基本結構。
     """
-    import os
 
     from backend.agents.policy import read_traffic_sop
 
@@ -300,14 +299,9 @@ def _generate_special_advisory(sop_type: str, incident: dict, context: dict) -> 
             "啟動人工交通指揮至號誌修復",
         ]
 
-    # 嘗試呼叫 LLM
-    provider = os.environ.get("LLM_PROVIDER", "gemini").lower()
+    # 透過 Bedrock Claude 產出處置方案
     try:
-        if provider == "gemini":
-            result = _call_gemini(prompt, "你是交控中心 AI 顧問，請產出處置方案。", "special")
-        else:
-            result = _call_bedrock(prompt, "你是交控中心 AI 顧問，請產出處置方案。", "special")
-
+        result = _call_bedrock(prompt, "你是交控中心 AI 顧問，請產出處置方案。", "special")
         ai_response = result.get("response", "")
         if ai_response and "錯誤" not in ai_response and "API" not in ai_response:
             # 解析 AI 回應為條列式
@@ -323,10 +317,9 @@ def _generate_special_advisory(sop_type: str, incident: dict, context: dict) -> 
 
 def _generate_ai_narrative(incident: dict, policy_result: dict, routing_result: dict, comms_result: dict, special_advisory: dict) -> str:
     """
-    呼叫 LLM (Gemini/Bedrock) 將計算數據 + SOP 原文整合為專業建議書敘述。
-    若 LLM 不可用則 fallback 到結構化文字。
+    透過 Amazon Bedrock Claude 將計算數據與 SOP 原文整合為專業建議書敘述。
+    若 Bedrock 不可用則 fallback 到結構化文字。
     """
-    import os
 
     from backend.agents.policy import read_traffic_sop
 
@@ -400,14 +393,9 @@ def _generate_ai_narrative(incident: dict, policy_result: dict, routing_result: 
 - 使用自然中文，以交控長官口吻撰寫
 """
 
-    # 呼叫 LLM
-    provider = os.environ.get("LLM_PROVIDER", "gemini").lower()
-
+    # 透過 Bedrock Claude 產出建議書
     try:
-        if provider == "gemini":
-            result = _call_gemini(prompt, "你是台北市交控中心 AI 決策顧問，請產出專業建議書。", "narrative")
-        else:
-            result = _call_bedrock(prompt, "你是台北市交控中心 AI 決策顧問，請產出專業建議書。", "narrative")
+        result = _call_bedrock(prompt, "你是台北市交控中心 AI 決策顧問，請產出專業建議書。", "narrative")
         return result.get("response", "")
     except Exception as e:
         logger.error(f"AI 建議書生成失敗: {e}")
@@ -516,18 +504,11 @@ def run_commander(event: dict | None = None, session_id: str = "", sim_time: str
 
 def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) -> dict:
     """
-    What-if 情境問答 — 支援 Bedrock 或 Gemini。
+    透過 Amazon Bedrock Claude Sonnet 5 執行 What-if 情境問答。
 
-    環境變數：
-      - LLM_PROVIDER: "bedrock" 或 "gemini" (預設 gemini)
-      - GEMINI_API_KEY: Google AI Studio API Key
-      - GEMINI_MODEL_ID: Gemini 模型 (預設 gemini-2.5-flash)
-      - BEDROCK_MODEL_ID: Bedrock 模型 (預設 us.anthropic.claude-sonnet-4-20250514)
-      - APP_AWS_REGION: AWS 區域
+    sim_time：本次問答要套用的模擬時間（不影響全域時鐘）；
+              留空則使用當下模擬時間。LLM 只會看到該時間為止的路網數據。
     """
-    import os
-
-    provider = os.environ.get("LLM_PROVIDER", "gemini").lower()
 
     # 讀取 SOP 作為 system context
     from backend.agents.policy import read_traffic_sop
@@ -569,79 +550,16 @@ def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) 
 {traffic_summary}
 """
 
-    if provider == "gemini":
-        result = _call_gemini(prompt, system_prompt, session_id)
-    else:
-        result = _call_bedrock(prompt, system_prompt, session_id)
-
+    result = _call_bedrock(prompt, system_prompt, session_id)
     result["sim_time"] = current_time
     return result
-
-
-def _call_gemini(prompt: str, system_prompt: str, session_id: str) -> dict:
-    """透過 Google Gemini API 回應。"""
-    import os
-
-    import httpx
-
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    model_id = os.environ.get("GEMINI_MODEL_ID", "gemini-2.5-flash")
-
-    if not api_key:
-        return {
-            "session_id": session_id,
-            "prompt": prompt,
-            "response": "錯誤：GEMINI_API_KEY 環境變數未設定",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        }
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
-
-    payload = {
-        "system_instruction": {"parts": [{"text": system_prompt}]},
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 4096,
-        },
-    }
-
-    try:
-        with httpx.Client(timeout=60) as client:
-            resp = client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-
-        # 解析 Gemini 回應
-        candidates = data.get("candidates", [])
-        if candidates:
-            parts = candidates[0].get("content", {}).get("parts", [])
-            response_text = "".join(p.get("text", "") for p in parts)
-        else:
-            response_text = "Gemini 未回傳有效內容"
-
-        return {
-            "session_id": session_id,
-            "prompt": prompt,
-            "response": response_text,
-            "model": f"gemini/{model_id}",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        }
-    except Exception as e:
-        logger.error(f"Gemini 呼叫失敗: {type(e).__name__}: {e}")
-        return {
-            "session_id": session_id,
-            "prompt": prompt,
-            "response": f"Gemini API 錯誤: {type(e).__name__}: {e}",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        }
 
 
 def _call_bedrock(prompt: str, system_prompt: str, session_id: str) -> dict:
     """透過 Amazon Bedrock (Strands SDK) 回應。"""
     import os
 
-    model_id = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-20250514")
+    model_id = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-5")
     region = os.environ.get("APP_AWS_REGION", os.environ.get("AWS_REGION", "us-west-2"))
 
     try:

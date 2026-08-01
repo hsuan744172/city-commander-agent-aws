@@ -47,6 +47,7 @@ load_dotenv()
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, UploadFile  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from backend import sim_clock  # noqa: E402
@@ -571,6 +572,17 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         with contextlib.suppress(ValueError):
             connected_clients.remove(websocket)
+
+
+# ---------------------------------------------------------------------------
+# Production dashboard hosting
+# ---------------------------------------------------------------------------
+
+# The App Runner image copies the Vite build here. Mounting this after API and
+# WebSocket routes preserves same-origin /api and /ws access for the dashboard.
+FRONTEND_DIST_DIR = PROJECT_ROOT / "frontend_dist"
+if FRONTEND_DIST_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST_DIR, html=True), name="frontend")
 
 
 # ---------------------------------------------------------------------------
