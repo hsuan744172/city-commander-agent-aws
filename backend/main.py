@@ -29,6 +29,11 @@ Endpoints:
   POST /api/clock/reset    → 回到環境變數初始設定
   POST /api/incidents      → 注入事件，觸發完整應變流程
   POST /api/incidents/upload → 上傳事件 JSON
+  GET  /api/incidents/catalog → 可注入的路段/站點與 live_incidents.json 範本
+  POST /api/incidents/preview → 嚴格驗證事件內容並回傳分類預覽 (不執行 Agent)
+  POST /api/incidents/preview/upload → 上傳 live_incidents.json 取得預覽
+  POST /api/incidents/inject  → 確認預覽後注入事件並推播給所有儀表板
+  GET  /api/incidents/injections → 近期注入紀錄
   POST /api/what-if        → What-if 情境問答
   GET  /api/health         → Health check
   WS   /ws/dashboard       → 時間推進時主動推播當下狀態
@@ -41,9 +46,12 @@ import contextlib
 import json
 import logging
 import os
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
 from dotenv import load_dotenv
 
@@ -51,7 +59,15 @@ from dotenv import load_dotenv
 # 因為模擬時鐘在載入時就會讀取 SIM_CLOCK_* 環境變數。
 load_dotenv()
 
-from fastapi import FastAPI, Query, Response, WebSocket, WebSocketDisconnect, UploadFile  # noqa: E402
+from fastapi import (  # noqa: E402
+    FastAPI,
+    Header,
+    Query,
+    Response,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
@@ -60,6 +76,21 @@ from pydantic import BaseModel, ValidationError  # noqa: E402
 from backend import camera_stream, sim_clock  # noqa: E402
 from backend.agents.architect import run_commander  # noqa: E402
 from backend.data_source import data_source_status, get_data_path  # noqa: E402
+from backend.incident_response import (  # noqa: E402
+    CONTRACT_VERSION,
+    DEFAULT_HISTORY_LIMIT,
+    TIMEZONE_LABEL,
+    ApiError,
+    ApiErrorDetail,
+    ApiErrorResponse,
+    EventInjectionService,
+    IncidentPayloadValidationError,
+    IncidentPreview,
+    IncidentRecord,
+    InjectionConfirmationError,
+    PreviewMismatchError,
+    parse_utc8_datetime,
+)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -71,6 +102,14 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MAX_UPLOAD_INCIDENTS = int(os.environ.get("MAX_UPLOAD_INCIDENTS", "3"))
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", "1048576"))
+
+# 管理員注入介面的共用權杖。留空 = 不驗證（本機 Demo 預設）；
+# 任何共用或公開部署都應設定，因為注入會觸發 Agent 執行並推播給所有儀表板。
+INCIDENT_INJECT_TOKEN = (os.environ.get("INCIDENT_INJECT_TOKEN") or "").strip()
+
+# 事件注入介面：目錄、預覽與注入紀錄都由這個服務提供，
+# 驗證規則一律沿用 backend/incident_response 的嚴格契約層。
+injection_service = EventInjectionService()
 
 # 時間推進時是否主動推播到 WebSocket
 PUSH_ON_TICK = (os.environ.get("SIM_CLOCK_PUSH", "true").strip().lower()
@@ -134,6 +173,23 @@ class IncidentsRequest(BaseModel):
     incidents: list[Incident]
     session_id: str = ""
     # 本次分析要套用的模擬時間；留空 = 使用當下模擬時鐘
+    sim_time: str = ""
+
+
+class IncidentPreviewRequest(BaseModel):
+    # live_incidents.json 的內容：事件陣列，或只含 incidents 陣列的物件。
+    # 這裡刻意不做型別限制，驗證與分類一律交給嚴格契約層的 parser。
+    payload: Any = None
+    sim_time: str = ""
+
+
+class IncidentInjectRequest(BaseModel):
+    payload: Any = None
+    # 預覽回傳的 preview_hash；帶上代表「注入的就是我剛看過的內容」。
+    preview_hash: str = ""
+    # 預覽要求的確認項目（payload、future_simulation）。
+    confirmations: list[str] = []
+    session_id: str = ""
     sim_time: str = ""
 
 
@@ -317,6 +373,20 @@ def _build_status(ts: str | None = None) -> dict:
         }
 
 
+async def _broadcast(message: dict) -> None:
+    """把一則訊息推給所有 WebSocket 連線，順手清掉已斷線的 socket。"""
+    if not connected_clients:
+        return
+
+    text = json.dumps(message, ensure_ascii=False, default=str)
+    for ws in list(connected_clients):
+        try:
+            await ws.send_text(text)
+        except Exception:
+            with contextlib.suppress(ValueError):
+                connected_clients.remove(ws)
+
+
 async def _broadcast_loop() -> None:
     """模擬時間變動時，主動把當下狀態推播給所有 WebSocket 連線。"""
     last_sent: str | None = None
@@ -332,14 +402,7 @@ async def _broadcast_loop() -> None:
                 continue
 
             payload = await asyncio.to_thread(_build_status)
-            message = json.dumps({"type": "status", **payload}, ensure_ascii=False, default=str)
-
-            for ws in list(connected_clients):
-                try:
-                    await ws.send_text(message)
-                except Exception:
-                    with contextlib.suppress(ValueError):
-                        connected_clients.remove(ws)
+            await _broadcast({"type": "status", **payload})
             last_sent = current
         except asyncio.CancelledError:
             raise
@@ -826,6 +889,282 @@ async def upload_incidents(
     except Exception:
         logger.exception("上傳事件處理失敗：檔案=%s", file.filename)
         return JSONResponse(status_code=500, content={"error": "事件處理失敗，請稍後重試"})
+
+
+# --- 管理員事件注入介面 -----------------------------------------------------
+#
+# 注入是三段式：目錄 → 預覽 → 確認注入。
+# 驗證與分類全部委派給 backend/incident_response 的嚴格契約層，
+# 所以注入介面與上傳介面不可能各自長出一套規則。
+
+
+def _admin_denied(token: str | None) -> JSONResponse | None:
+    """管理員端點的選用共用權杖檢查。
+
+    未設定 INCIDENT_INJECT_TOKEN 時完全開放，保留本機 Demo 的便利性。
+    共用或公開部署務必設定：注入會啟動 Agent 執行並推播給所有連線的儀表板。
+    """
+    if not INCIDENT_INJECT_TOKEN:
+        return None
+    if token and secrets.compare_digest(token, INCIDENT_INJECT_TOKEN):
+        return None
+    return _api_error_response(
+        code="INCIDENT_ADMIN_FORBIDDEN",
+        message="事件注入需要管理員權杖",
+        path="X-Admin-Token",
+        detail_code="admin_token_invalid",
+        detail_message="請於 X-Admin-Token 標頭提供正確權杖",
+        status_code=403,
+    )
+
+
+def _api_error_response(
+    *,
+    code: str,
+    message: str,
+    path: str,
+    detail_code: str,
+    detail_message: str,
+    status_code: int,
+) -> JSONResponse:
+    """組出契約層的錯誤信封，內容只含穩定代碼與可安全外流的訊息。"""
+    trace_id = uuid4().hex
+    logger.info("事件注入請求被拒：code=%s trace=%s", code, trace_id)
+    envelope = ApiErrorResponse(
+        error=ApiError(
+            code=code,
+            message=message,
+            trace_id=trace_id,
+            details=(
+                ApiErrorDetail(path=path, code=detail_code, message=detail_message),
+            ),
+        )
+    )
+    return JSONResponse(status_code=status_code, content=envelope.model_dump(mode="json"))
+
+
+def _incident_error_response(exc, *, status_code: int, context: str) -> JSONResponse:
+    """把契約層的驗證/確認錯誤轉成同一種錯誤信封。"""
+    trace_id = uuid4().hex
+    logger.info(
+        "事件注入被拒（%s）：code=%s trace=%s", context, getattr(exc, "code", "?"), trace_id
+    )
+    envelope = ApiErrorResponse(error=exc.as_api_error(trace_id=trace_id))
+    return JSONResponse(status_code=status_code, content=envelope.model_dump(mode="json"))
+
+
+def _resolve_injection_clock(sim_time: str) -> str:
+    """決定這次注入要對齊的模擬時間，留空即使用當下模擬時鐘。"""
+    requested = (sim_time or "").strip()
+    if not requested:
+        return sim_clock.now_str()
+    parse_utc8_datetime(requested)  # 格式錯誤時丟 ValueError
+    return requested
+
+
+def _invalid_sim_time_response() -> JSONResponse:
+    return _api_error_response(
+        code="INCIDENT_SIM_TIME_INVALID",
+        message="模擬時間格式無效",
+        path="sim_time",
+        detail_code="datetime",
+        detail_message="請使用 UTC+8 的 YYYY-MM-DD HH:MM 格式",
+        status_code=400,
+    )
+
+
+def _preview_response(preview: IncidentPreview) -> dict:
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "timezone": TIMEZONE_LABEL,
+        "preview": preview.model_dump(mode="json"),
+    }
+
+
+def _agent_incident(record: IncidentRecord) -> dict:
+    """把驗證後的事件投影成 Agent 讀得懂的 dict。
+
+    category 與 original_index 是契約層自己推導出來的欄位，不往下傳，
+    避免 Agent 端出現第二套分類來源。
+    """
+    data = record.model_dump(mode="json")
+    for derived in ("category", "original_index"):
+        data.pop(derived, None)
+    return {key: value for key, value in data.items() if value is not None}
+
+
+@app.get("/api/incidents/catalog")
+async def incident_injection_catalog(
+    refresh: bool = Query(False, description="強制重新讀取資料來源"),
+):
+    """
+    事件注入目錄：可引用的路段與人流站點、合法列舉值，
+    以及 data/live_incidents.json 內建的事件範本（含推導出的事件分類）。
+    """
+    catalog = await asyncio.to_thread(injection_service.catalog, refresh=refresh)
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "timezone": TIMEZONE_LABEL,
+        "sim_time": sim_clock.now_str(),
+        "requires_admin_token": bool(INCIDENT_INJECT_TOKEN),
+        **catalog.as_api_dict(),
+    }
+
+
+@app.post("/api/incidents/preview")
+async def preview_incidents(request: IncidentPreviewRequest):
+    """
+    嚴格驗證 live_incidents.json 內容並回傳預覽：事件分類、可能觸發的 SOP 條號、
+    是否含有超過當下模擬時間的事件，以及注入前必須回覆的確認項目。此端點不執行 Agent。
+    """
+    try:
+        clock_time = _resolve_injection_clock(request.sim_time)
+    except (TypeError, ValueError):
+        return _invalid_sim_time_response()
+
+    try:
+        preview = await asyncio.to_thread(
+            injection_service.preview_json,
+            request.payload,
+            simulation_clock_time=clock_time,
+        )
+    except IncidentPayloadValidationError as exc:
+        return _incident_error_response(exc, status_code=400, context="preview")
+
+    return JSONResponse(content=_preview_response(preview))
+
+
+@app.post("/api/incidents/preview/upload")
+async def preview_uploaded_incidents(
+    file: UploadFile,
+    ts: str | None = Query(None, description="本次注入要對齊的模擬時間"),
+):
+    """上傳 live_incidents.json 取得同一份預覽；副檔名、大小與編碼規則由契約層把關。"""
+    try:
+        clock_time = _resolve_injection_clock(ts or "")
+    except (TypeError, ValueError):
+        return _invalid_sim_time_response()
+
+    content = await file.read()
+    try:
+        preview = await asyncio.to_thread(
+            injection_service.preview_upload,
+            filename=file.filename or "",
+            content=content,
+            simulation_clock_time=clock_time,
+        )
+    except IncidentPayloadValidationError as exc:
+        return _incident_error_response(exc, status_code=400, context="preview_upload")
+
+    return JSONResponse(content=_preview_response(preview))
+
+
+@app.post("/api/incidents/inject")
+async def inject_incidents(
+    request: IncidentInjectRequest,
+    x_admin_token: str | None = Header(None, alias="X-Admin-Token"),
+):
+    """
+    管理員注入事件：重新驗證 → 比對預覽雜湊 → 檢查確認項目 → 執行完整應變流程，
+    最後把建議書推播給所有連線的儀表板並留存注入紀錄。
+    """
+    denied = _admin_denied(x_admin_token)
+    if denied is not None:
+        return denied
+
+    try:
+        clock_time = _resolve_injection_clock(request.sim_time)
+    except (TypeError, ValueError):
+        return _invalid_sim_time_response()
+
+    # 注入前重新走一次預覽：確認項目與雜湊都對照「現在」的驗證結果，
+    # 不信任呼叫端自己算出來的預覽。
+    try:
+        preview = await asyncio.to_thread(
+            injection_service.preview_json,
+            request.payload,
+            simulation_clock_time=clock_time,
+        )
+        injection_service.verify_preview_hash(preview, request.preview_hash)
+        injection_service.verify_confirmations(preview, request.confirmations)
+    except IncidentPayloadValidationError as exc:
+        return _incident_error_response(exc, status_code=400, context="inject")
+    except InjectionConfirmationError as exc:
+        return _incident_error_response(exc, status_code=400, context="inject")
+    except PreviewMismatchError as exc:
+        return _incident_error_response(exc, status_code=409, context="inject")
+
+    incidents = [
+        _agent_incident(record) for record in preview.normalized_payload.incidents
+    ]
+    session_id = (
+        request.session_id or f"inject_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    )
+    logger.info(
+        "開始注入事件：session=%s，preview=%s，事件數=%s，模擬時間=%s",
+        session_id,
+        preview.preview_id,
+        len(incidents),
+        clock_time,
+    )
+
+    try:
+        report = await asyncio.to_thread(
+            run_commander, {"incidents": incidents}, session_id, clock_time
+        )
+    except Exception:
+        logger.exception("事件注入執行失敗：session=%s", session_id)
+        envelope = ApiErrorResponse.internal(
+            code="INCIDENT_RUN_FAILED", trace_id=uuid4().hex
+        )
+        return JSONResponse(status_code=500, content=envelope.model_dump(mode="json"))
+
+    record = injection_service.record_injection(
+        preview=preview, session_id=session_id, report=report
+    )
+    logger.info(
+        "事件注入完成：session=%s，processed=%s，failed=%s",
+        session_id,
+        report.get("processed", 0),
+        report.get("failed", 0),
+    )
+
+    # 其他值班席位的儀表板不必重新整理就會收到這份建議書。
+    await _broadcast(
+        {
+            "type": "incident_report",
+            "injection_id": record.injection_id,
+            "event_ids": list(record.event_ids),
+            "report": report,
+        }
+    )
+
+    return JSONResponse(
+        content={
+            "contract_version": CONTRACT_VERSION,
+            "timezone": TIMEZONE_LABEL,
+            "injection": record.as_api_dict(include_report=False),
+            "preview": preview.model_dump(mode="json"),
+            "report": report,
+        }
+    )
+
+
+@app.get("/api/incidents/injections")
+async def list_incident_injections(
+    limit: int = Query(5, ge=1, le=DEFAULT_HISTORY_LIMIT),
+    include_report: bool = Query(False, description="是否一併回傳建議書內容"),
+):
+    """近期注入紀錄（新到舊）。重新整理後的儀表板可據此接回最後一份建議書。"""
+    records = injection_service.recent_injections(limit=limit)
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "timezone": TIMEZONE_LABEL,
+        "count": len(records),
+        "injections": [
+            record.as_api_dict(include_report=include_report) for record in records
+        ],
+    }
 
 
 @app.post("/api/what-if")

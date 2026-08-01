@@ -61,8 +61,26 @@ parser、來源驗證與 strict as-of 快照。目前僅為程式庫，尚未接
 S3 並快取到本機，讀取失敗（無 bucket、無權限、物件不存在）會自動退回 `data/` 目錄，
 服務不中斷。目前來源狀態可由 `GET /api/health` 的 `data_source` 欄位查看。
 
-突發事件走 `POST /api/incidents/upload`，格式為事件陣列或含 `incidents` 的物件；
-`data/live_incidents.json` 僅為範例檔，部署腳本已將它排除在 S3 同步之外。
+突發事件走事件注入介面（見下節），格式為事件陣列或含 `incidents` 的物件；
+`data/live_incidents.json` 同時是範例檔與 Dashboard 內建的注入範本，
+部署腳本已將它排除在 S3 同步之外。
+
+### 事件注入介面
+
+Dashboard 的「事件注入」頁提供管理員注入 `live_incidents.json`（路面塌陷、人流激增、
+號誌故障三類），流程固定為 **目錄 → 預覽 → 確認注入**：
+
+1. `GET /api/incidents/catalog` 提供可引用的路段與人流站點、合法列舉值，以及
+   `data/live_incidents.json` 推導出事件分類後的內建範本。
+2. `POST /api/incidents/preview`（或上傳檔案的 `/api/incidents/preview/upload`）以
+   `backend/incident_response` 的嚴格契約層驗證內容，回傳事件分類、可能適用的 SOP 條號、
+   是否含有晚於當下模擬時間的事件，以及注入前必須回覆的確認項目。此步驟不呼叫 Agent。
+3. `POST /api/incidents/inject` 重新驗證一次，比對 `preview_hash` 並檢查確認項目後才執行
+   應變流程，完成後把建議書寫入注入紀錄並透過 `/ws/dashboard` 推播給所有連線的儀表板。
+
+驗證與分類只有一套實作（`backend/incident_response/payload.py`），注入介面與上傳介面
+不會各自長出規則。`POST /api/incidents/inject` 可用 `INCIDENT_INJECT_TOKEN` 加上共用權杖
+保護（見 `.env.example`）；未設定時完全開放，適用本機 Demo。
 
 ### 60 秒預算
 
@@ -87,8 +105,13 @@ S3 並快取到本機，讀取失敗（無 bucket、無權限、物件不存在�
 | POST | `/api/clock/reset` | 回到環境變數初始設定 |
 | POST | `/api/incidents` | 處理事件並產生交控建議書 |
 | POST | `/api/incidents/upload` | 上傳事件 JSON |
+| GET | `/api/incidents/catalog` | 可注入的路段/站點與 `live_incidents.json` 範本 |
+| POST | `/api/incidents/preview` | 嚴格驗證事件內容並回傳分類預覽（不執行 Agent） |
+| POST | `/api/incidents/preview/upload` | 上傳 `live_incidents.json` 取得同一份預覽 |
+| POST | `/api/incidents/inject` | 確認預覽後注入事件並推播給所有儀表板 |
+| GET | `/api/incidents/injections` | 近期注入紀錄（可含建議書） |
 | POST | `/api/what-if` | Bedrock 情境問答 |
-| WS | `/ws/dashboard` | 模擬時間推進時主動推播狀態 |
+| WS | `/ws/dashboard` | 模擬時間推進時推播狀態；事件注入完成時推播建議書 |
 
 所有端點都支援 `?ts=YYYY-MM-DD HH:MM` 單次時間覆寫，不影響全域時鐘。FastAPI 互動文件位於 `/docs`。
 

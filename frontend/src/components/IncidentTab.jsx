@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
-import { ArrowLeft, Crosshair, LayoutGrid } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Crosshair, LayoutGrid, Siren } from "lucide-react";
 import IncidentMap from "./IncidentMap";
 import AdvisoryCard from "./AdvisoryCard";
 import StreetCam from "./StreetCam";
 import AlertTicker from "./AlertTicker";
 import TrendChart from "./TrendChart";
 import useNetworkStatus from "../lib/useNetworkStatus";
+import { fetchRecentInjections } from "../lib/incidentInjection";
 import { cn } from "../lib/utils";
 
 const LEVEL_ORDER = { A: 0, B: 1, Normal: 2 };
@@ -18,15 +19,39 @@ function levelBadge(level) {
 
 /**
  * 事件處置與建議書
+ * report：本次事件注入產出的建議書（來自事件注入頁）
  * focusSegmentId：由儀表板點擊路段或事件小卡帶入，聚焦顯示該路段的處置資訊
  */
-export default function IncidentTab({ focusSegmentId = null, onClearFocus, onBackToDashboard }) {
-  // 建議書資料來源：後端事件注入 API（POST /api/incidents）
-  const [report] = useState(null);
+export default function IncidentTab({
+  report: injectedReport = null,
+  focusSegmentId = null,
+  onClearFocus,
+  onBackToDashboard,
+  onOpenInjection,
+}) {
+  // 建議書來源：本次注入的結果優先；重新整理後改由最後一筆注入紀錄補回，
+  // 值班席位不必重新注入就能看到現行處置。
+  const [latestReport, setLatestReport] = useState(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [pinnedSegmentId, setPinnedSegmentId] = useState(null);
   const { segments, timestamp, autoAdvisories } = useNetworkStatus();
 
+  useEffect(() => {
+    if (injectedReport) return undefined;
+    let cancelled = false;
+    fetchRecentInjections({ limit: 1, includeReport: true })
+      .then((body) => {
+        if (!cancelled) setLatestReport(body.injections?.[0]?.report || null);
+      })
+      .catch(() => {
+        // 沒有注入紀錄時維持空白狀態即可
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [injectedReport]);
+
+  const report = injectedReport || latestReport;
   const advisories = report?.advisories || [];
   const selectedAdvisory = advisories[selectedIdx] || null;
 
@@ -128,6 +153,26 @@ export default function IncidentTab({ focusSegmentId = null, onClearFocus, onBac
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {advisories.length === 0 && !focusMode && (
+        <div className="bg-[var(--card)] rounded-lg border border-[var(--border)] p-4 flex items-center justify-between gap-3 flex-wrap">
+          <div className="space-y-1">
+            <div className="text-sm font-medium">目前沒有事件建議書</div>
+            <p className="text-sm text-[var(--muted-foreground)]">
+              由「事件注入」頁注入 live_incidents.json 事件後，建議書會自動出現在這裡。
+            </p>
+          </div>
+          {onOpenInjection && (
+            <button
+              onClick={onOpenInjection}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 transition focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
+            >
+              <Siren className="w-3.5 h-3.5" />
+              前往事件注入
+            </button>
+          )}
         </div>
       )}
 
