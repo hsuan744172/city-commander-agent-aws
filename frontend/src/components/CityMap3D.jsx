@@ -3,26 +3,85 @@ import { Map, NavigationControl, Popup } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 // ============================================================
-// 信義計畫區路段座標 (lng, lat) — GeoJSON 格式 [經度, 緯度]
-// 來源：IncidentMap.jsx 的 Leaflet [lat, lng] 轉換
+// 信義計畫區路段座標 (lng, lat) — 來源：OpenStreetMap Overpass API
+// 資料授權：© OpenStreetMap contributors, ODbL 1.0
 // ============================================================
 const SEGMENT_COORDS = {
-  RD_TPE_001: [[121.5513,25.04165],[121.5521,25.04163],[121.5533,25.04161],[121.5545,25.04160],[121.5557,25.04158],[121.5568,25.04157],[121.5577,25.04155],[121.5590,25.04153],[121.5602,25.04152],[121.5610,25.04150]],
-  RD_TPE_002: [[121.5577,25.04490],[121.5577,25.04420],[121.5577,25.04350],[121.5577,25.04280],[121.5577,25.04165],[121.5577,25.04080],[121.5577,25.03990],[121.5577,25.03900],[121.5577,25.03850]],
-  RD_TPE_003: [[121.5610,25.04320],[121.5610,25.04230],[121.5610,25.04150],[121.5610,25.04050],[121.5610,25.03950],[121.5611,25.03850],[121.5611,25.03750],[121.5611,25.03650],[121.5611,25.03550]],
-  RD_TPE_004: [[121.5435,25.04490],[121.5450,25.04490],[121.5470,25.04490],[121.5492,25.04490],[121.5513,25.04490],[121.5535,25.04490],[121.5557,25.04490],[121.5577,25.04490]],
-  RD_TPE_005: [[121.5492,25.03850],[121.5510,25.03850],[121.5530,25.03850],[121.5550,25.03850],[121.5568,25.03850],[121.5577,25.03850],[121.5595,25.03850],[121.5610,25.03850],[121.5635,25.03850]],
-  RD_TPE_006: [[121.5492,25.04490],[121.5492,25.04380],[121.5492,25.04280],[121.5492,25.04165],[121.5492,25.04050],[121.5492,25.03950],[121.5492,25.03850]],
-  RD_TPE_007: [[121.5611,25.03650],[121.5625,25.03650],[121.5640,25.03650],[121.5655,25.03650],[121.5670,25.03650],[121.5685,25.03650]],
-  RD_TPE_008: [[121.5521,25.04300],[121.5521,25.04165],[121.5521,25.04050],[121.5521,25.03950],[121.5521,25.03850]],
-  RD_TPE_009: [[121.5610,25.04490],[121.5610,25.04420],[121.5610,25.04350],[121.5610,25.04320]],
-  RD_TPE_010: [[121.5635,25.03850],[121.5635,25.03750],[121.5635,25.03650],[121.5635,25.03550],[121.5635,25.03450],[121.5635,25.03350]],
-  RD_TPE_011: [[121.5611,25.03480],[121.5625,25.03480],[121.5640,25.03480],[121.5655,25.03480],[121.5670,25.03480],[121.5685,25.03480]],
-  RD_TPE_012: [[121.5492,25.03850],[121.5492,25.03750],[121.5492,25.03650],[121.5492,25.03550],[121.5492,25.03450]],
-  RD_TPE_013: [[121.5611,25.03350],[121.5625,25.03350],[121.5640,25.03350],[121.5655,25.03350],[121.5670,25.03350],[121.5685,25.03350]],
-  RD_TPE_014: [[121.5685,25.03650],[121.5685,25.03550],[121.5685,25.03480],[121.5685,25.03400],[121.5685,25.03350]],
-  RD_TPE_015: [[121.5435,25.04490],[121.5435,25.04400],[121.5435,25.04300],[121.5435,25.04200],[121.5435,25.04165]],
+  // 忠孝東路四段：東西向，從敦化南路到基隆路 (way 255431333 eastbound)
+  RD_TPE_001: [[121.5491111,25.0414462],[121.5496454,25.0414311],[121.5507018,25.0414053],[121.5518126,25.0413908],[121.5528894,25.0413710],[121.5540858,25.0413490],[121.5544492,25.0413423],[121.5547873,25.0413361],[121.5555718,25.0414465],[121.5561215,25.0414375],[121.5576145,25.0412833],[121.5577382,25.0412799],[121.5593809,25.0412216],[121.5610007,25.0411741],[121.5615828,25.0411600]],
+  // 光復南路：南北向 (northbound way 746296430 + 506339442)
+  RD_TPE_002: [[121.5575276,25.0378611],[121.5575731,25.0393422],[121.5576145,25.0412833],[121.5576181,25.0414157],[121.5576241,25.0417443],[121.5576423,25.0425264],[121.5576573,25.0431115],[121.5576632,25.0435239],[121.5576693,25.0439487],[121.5576844,25.0449905]],
+  // 基隆路一段：南北向偏斜 (northbound)
+  RD_TPE_003: [[121.5605277,25.0343462],[121.5615056,25.0359423],[121.5635643,25.0395598],[121.5645790,25.0411035],[121.5654947,25.0426500],[121.5660201,25.0435592],[121.5671405,25.0454300],[121.5680022,25.0468180]],
+  // 市民大道四段：東西向 (eastbound)
+  RD_TPE_004: [[121.5439383,25.0449789],[121.5464396,25.0450046],[121.5486443,25.0447762],[121.5508101,25.0445426],[121.5522774,25.0443109],[121.5542600,25.0443028],[121.5556360,25.0445740],[121.5576844,25.0449905]],
+  // 仁愛路四段：東西向 (eastbound)
+  RD_TPE_005: [[121.5437600,25.0379096],[121.5460393,25.0378690],[121.5479435,25.0379694],[121.5497128,25.0380301],[121.5529366,25.0378378],[121.5554302,25.0377944],[121.5575276,25.0378611],[121.5606536,25.0377084],[121.5619400,25.0373552]],
+  // 敦化南路一段：南北向 (northbound)
+  RD_TPE_006: [[121.5485749,25.0364206],[121.5486039,25.0373434],[121.5486002,25.0389471],[121.5486159,25.0414665],[121.5486299,25.0426119],[121.5486443,25.0447762],[121.5486457,25.0449924]],
+  // 松高路：東西向 (eastbound)
+  RD_TPE_007: [[121.5615402,25.0391995],[121.5636125,25.0391447],[121.5650897,25.0391155],[121.5660984,25.0391181],[121.5676428,25.0390906],[121.5685218,25.0390749]],
+  // 延吉街：南北向偏斜
+  RD_TPE_008: [[121.5544785,25.0414800],[121.5541723,25.0426146],[121.5537795,25.0445125],[121.5535232,25.0466363],[121.5533420,25.0481763]],
+  // 基隆路地下道（近基隆路一段北段）
+  RD_TPE_009: [[121.5671405,25.0454300],[121.5673934,25.0458103],[121.5680022,25.0468180],[121.5687763,25.0481134]],
+  // 市府路：南北向
+  RD_TPE_010: [[121.5635362,25.0330043],[121.5635561,25.0340152],[121.5635978,25.0357732],[121.5635646,25.0358947],[121.5635734,25.0372648],[121.5636088,25.0390162],[121.5636125,25.0391447]],
+  // 松壽路：東西向
+  RD_TPE_011: [[121.5611968,25.0359480],[121.5619558,25.0359342],[121.5635646,25.0358947],[121.5650045,25.0358787],[121.5663989,25.0358534],[121.5675710,25.0358321],[121.5684456,25.0358278]],
+  // 敦化南路二段：南北向（一段延伸往南）
+  RD_TPE_012: [[121.5485555,25.0333661],[121.5485749,25.0364206]],
+  // 信義路五段：東西向
+  RD_TPE_013: [[121.5597077,25.0331059],[121.5606004,25.0330712],[121.5613824,25.0330508],[121.5623292,25.0330300],[121.5634121,25.0330053],[121.5652661,25.0329623],[121.5654166,25.0329580]],
+  // 松智路：南北向
+  RD_TPE_014: [[121.5654166,25.0329580],[121.5654326,25.0339542],[121.5654485,25.0357440],[121.5654537,25.0360001],[121.5654874,25.0370553],[121.5655044,25.0378973],[121.5655264,25.0389904]],
+  // 復興南路一段：南北向
+  RD_TPE_015: [[121.5437213,25.0356214],[121.5437448,25.0368158],[121.5437575,25.0377844],[121.5438051,25.0398860],[121.5438379,25.0415558],[121.5438661,25.0425198],[121.5439352,25.0447557]],
 };
+
+// ============================================================
+// 人流密度觀測站座標 [lng, lat] — 來源：OSM Nominatim API
+// 資料授權：© OpenStreetMap contributors, ODbL 1.0
+// ============================================================
+const STATION_COORDS = {
+  BS_TPE_DOME:   [121.5595809, 25.0424051],  // 大巨蛋場館
+  BS_MRT_BL17:   [121.5574500, 25.0412200],  // 捷運國父紀念館站
+  BS_SS_PARK:    [121.5607970, 25.0437228],  // 松山文創園區
+  BS_MRT_BL16:   [121.5505994, 25.0414809],  // 捷運忠孝敦化站
+  BS_XY_VIESHOW: [121.5672427, 25.0351570],  // 信義威秀商圈
+  BS_TPE_101:    [121.5644995, 25.0338352],  // 台北101廣場
+  BS_BUS_TERM:   [121.5651415, 25.0405413],  // 市府轉運站
+  BS_XY_ATT:     [121.5662040, 25.0356567],  // ATT4FUN周邊
+};
+
+const STATION_NAMES = {
+  BS_TPE_DOME:   "大巨蛋場館",
+  BS_MRT_BL17:   "國父紀念館站",
+  BS_SS_PARK:    "松山文創園區",
+  BS_MRT_BL16:   "忠孝敦化站",
+  BS_XY_VIESHOW: "信義威秀商圈",
+  BS_TPE_101:    "台北101廣場",
+  BS_BUS_TERM:   "市府轉運站",
+  BS_XY_ATT:     "ATT4FUN周邊",
+};
+
+/**
+ * 建立站點 GeoJSON
+ */
+function buildStationGeoJSON() {
+  const features = Object.entries(STATION_COORDS).map(([id, coords]) => ({
+    type: "Feature",
+    properties: {
+      bs_id: id,
+      name: STATION_NAMES[id] || id,
+    },
+    geometry: {
+      type: "Point",
+      coordinates: coords,
+    },
+  }));
+  return { type: "FeatureCollection", features };
+}
 
 /**
  * 飽和度 → 顏色漸變
@@ -62,7 +121,7 @@ function saturationToColor(score) {
 /**
  * 將後端 segments 資料轉換為 GeoJSON FeatureCollection
  */
-function buildRoadGeoJSON(segments) {
+function buildRoadGeoJSON(segments, selectedIds = []) {
   const features = [];
   for (const seg of segments) {
     const coords = SEGMENT_COORDS[seg.segment_id];
@@ -78,6 +137,7 @@ function buildRoadGeoJSON(segments) {
         level: seg.level,
         lane_status: seg.lane_status,
         color: saturationToColor(seg.saturation_score),
+        selected: selectedIds.includes(seg.segment_id) ? 1 : 0,
       },
       geometry: {
         type: "LineString",
@@ -94,11 +154,13 @@ function buildRoadGeoJSON(segments) {
  * - 道路線依飽和度即時漸變色
  * - 串接後端 /api/status 自動刷新
  */
-export default function CityMap3D({ segments = [], className = "" }) {
+export default function CityMap3D({ segments = [], selectedSegmentIds = [], onSegmentClick, className = "" }) {
   const mapContainer = useRef(null);
   const mapRef = useRef(null);
   const popupRef = useRef(null);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const onSegmentClickRef = useRef(onSegmentClick);
+  onSegmentClickRef.current = onSegmentClick;
 
   // 初始化地圖
   useEffect(() => {
@@ -107,8 +169,8 @@ export default function CityMap3D({ segments = [], className = "" }) {
     const map = new Map({
       container: mapContainer.current,
       style: "https://tiles.openfreemap.org/styles/bright",
-      center: [121.5577, 25.0390], // 信義計畫區中心
-      zoom: 15.2,
+      center: [121.5580, 25.0400], // 信義計畫區中心
+      zoom: 14.5,
       pitch: 50,
       bearing: -17.6,
       canvasContextAttributes: { antialias: true },
@@ -175,6 +237,22 @@ export default function CityMap3D({ segments = [], className = "" }) {
         data: { type: "FeatureCollection", features: [] },
       });
 
+      // 隱形寬線：用於擴大點擊/hover 的命中區域
+      map.addLayer({
+        id: "traffic-roads-hitarea",
+        type: "line",
+        source: "traffic-roads",
+        paint: {
+          "line-color": "#000000",
+          "line-opacity": 0.01,
+          "line-width": 28,
+        },
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+        },
+      });
+
       // 路線外框（深色邊框增加深度感）
       map.addLayer({
         id: "traffic-roads-outline",
@@ -189,6 +267,29 @@ export default function CityMap3D({ segments = [], className = "" }) {
             18, 20,
           ],
           "line-blur": 1,
+        },
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+        },
+      });
+
+      // 選中路段的額外粗外框
+      map.addLayer({
+        id: "traffic-roads-selected-outline",
+        type: "line",
+        source: "traffic-roads",
+        filter: ["==", ["get", "selected"], 1],
+        paint: {
+          "line-color": "#2563eb",
+          "line-width": [
+            "interpolate", ["linear"], ["zoom"],
+            13, 10,
+            16, 18,
+            18, 28,
+          ],
+          "line-blur": 2,
+          "line-opacity": 0.5,
         },
         layout: {
           "line-cap": "round",
@@ -237,18 +338,66 @@ export default function CityMap3D({ segments = [], className = "" }) {
         },
       });
 
-      // --- Popup 互動 ---
-      map.on("mouseenter", "traffic-roads-fill", () => {
+      // --- 人流密度觀測站標記 ---
+      map.addSource("stations", {
+        type: "geojson",
+        data: buildStationGeoJSON(),
+      });
+
+      // 站點圓圈
+      map.addLayer({
+        id: "stations-circle",
+        type: "circle",
+        source: "stations",
+        paint: {
+          "circle-radius": 8,
+          "circle-color": "#6366f1",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2,
+          "circle-opacity": 0.9,
+        },
+      });
+
+      // 站點名稱標籤
+      map.addLayer({
+        id: "stations-labels",
+        type: "symbol",
+        source: "stations",
+        layout: {
+          "text-field": ["get", "name"],
+          "text-size": 11,
+          "text-font": ["Noto Sans Regular"],
+          "text-offset": [0, 1.5],
+          "text-anchor": "top",
+          "text-allow-overlap": false,
+        },
+        paint: {
+          "text-color": "#4338ca",
+          "text-halo-color": "rgba(255,255,255,0.9)",
+          "text-halo-width": 1.5,
+        },
+      });
+
+      // 站點 hover popup
+      map.on("mouseenter", "stations-circle", () => {
         map.getCanvas().style.cursor = "pointer";
       });
-      map.on("mouseleave", "traffic-roads-fill", () => {
+      map.on("mouseleave", "stations-circle", () => {
+        map.getCanvas().style.cursor = "";
+      });
+
+      // --- Popup 互動 (使用 hitarea 圖層偵測) ---
+      map.on("mouseenter", "traffic-roads-hitarea", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", "traffic-roads-hitarea", () => {
         map.getCanvas().style.cursor = "";
         if (popupRef.current) {
           popupRef.current.remove();
           popupRef.current = null;
         }
       });
-      map.on("mousemove", "traffic-roads-fill", (e) => {
+      map.on("mousemove", "traffic-roads-hitarea", (e) => {
         if (!e.features?.length) return;
         const props = e.features[0].properties;
         const score = Math.round(props.saturation_score * 100);
@@ -261,7 +410,7 @@ export default function CityMap3D({ segments = [], className = "" }) {
             <div>飽和度：<b>${score}%</b></div>
             <div>平均時速：${props.avg_speed} km/h</div>
             <div>車流量：${props.vehicle_count} 輛</div>
-            <div style="color:#666;font-size:11px;margin-top:4px">${props.lane_status}</div>
+            <div style="color:#888;font-size:11px;margin-top:4px">點擊加入趨勢圖</div>
           </div>
         `;
 
@@ -276,6 +425,27 @@ export default function CityMap3D({ segments = [], className = "" }) {
             .setLngLat(e.lngLat)
             .setHTML(html)
             .addTo(map);
+        }
+      });
+
+      // --- 點擊路段：加入/移除趨勢圖 ---
+      map.on("click", "traffic-roads-hitarea", (e) => {
+        if (!e.features?.length) return;
+        const props = e.features[0].properties;
+        // 關閉 popup 避免干擾
+        if (popupRef.current) {
+          popupRef.current.remove();
+          popupRef.current = null;
+        }
+        if (onSegmentClickRef.current) {
+          onSegmentClickRef.current({
+            segment_id: props.segment_id,
+            road_name: props.road_name,
+            saturation_score: Number(props.saturation_score),
+            avg_speed: Number(props.avg_speed),
+            vehicle_count: Number(props.vehicle_count),
+            level: props.level,
+          });
         }
       });
 
@@ -297,9 +467,9 @@ export default function CityMap3D({ segments = [], className = "" }) {
     const source = map.getSource("traffic-roads");
     if (!source) return;
 
-    const geojson = buildRoadGeoJSON(segments);
+    const geojson = buildRoadGeoJSON(segments, selectedSegmentIds);
     source.setData(geojson);
-  }, [segments, mapLoaded]);
+  }, [segments, selectedSegmentIds, mapLoaded]);
 
   return (
     <div className={`relative rounded-xl overflow-hidden border border-gray-200 shadow-sm ${className}`}>

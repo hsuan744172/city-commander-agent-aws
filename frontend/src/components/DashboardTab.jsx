@@ -82,8 +82,13 @@ export default function DashboardTab() {
 
   return (
     <div className="space-y-4">
-      {/* 3D 城市地圖：道路飽和度即時漸變 */}
-      <CityMap3D segments={segments} className="h-[520px]" />
+      {/* 3D 城市地圖：道路飽和度即時漸變，點擊路段加入趨勢圖 */}
+      <CityMap3D
+        segments={segments}
+        selectedSegmentIds={chartSegments.map((s) => s.segment_id)}
+        onSegmentClick={handleAddToChart}
+        className="h-[520px]"
+      />
 
       {/* 頂部：威脅網格 (可拖拉進折線圖) */}
       <ThreatGrid
