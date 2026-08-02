@@ -14,6 +14,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import ConfirmDialog from "./ConfirmDialog";
 import IncidentResponsePanel from "./IncidentResponsePanel";
 import {
   CONFIRMATION_LABELS,
@@ -67,8 +68,11 @@ function editableRecord(record) {
 /**
  * 事件注入介面（管理員）
  *
- * 三段式流程：挑選/編輯 live_incidents.json 內容 → 驗證取得預覽 → 勾選確認後注入。
+ * 三段式流程：挑選/編輯 live_incidents.json 內容 → 驗證取得預覽 → 在確認對話框勾選後注入。
  * 所有驗證與分類都由後端契約層負責，這裡只呈現結果與收集確認。
+ *
+ * 注入前確認從驗證卡片裡的勾選方塊改成跳出式對話框：注入會改動全系統狀態，
+ * 確認這一步不該混在可捲動的長卡片中被順手滑過，改由對話框把動作攔在眼前。
  */
 export default function InjectionTab() {
   const [catalog, setCatalog] = useState(null);
@@ -79,6 +83,7 @@ export default function InjectionTab() {
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState(null);
   const [confirmed, setConfirmed] = useState([]);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   // 上傳失敗時要提示「已保留上一份有效預覽」，與編輯內容出錯的語意不同
   const [uploadFailed, setUploadFailed] = useState(false);
   const [busy, setBusy] = useState("");
@@ -124,6 +129,8 @@ export default function InjectionTab() {
   const invalidatePreview = () => {
     setPreview(null);
     setConfirmed([]);
+    // 對話框上的確認事項是綁在剛剛那份預覽上的，預覽作廢就一併收掉
+    setConfirmOpen(false);
     setError(null);
     setResult(null);
     setUploadFailed(false);
@@ -222,6 +229,19 @@ export default function InjectionTab() {
     }
   };
 
+  // 對話框按下確認：先收掉對話框再送出，注入中的狀態由「注入系統」鈕接手顯示
+  const confirmInject = () => {
+    if (busy !== "") return;
+    setConfirmOpen(false);
+    runInject();
+  };
+
+  const cancelInject = () => {
+    setConfirmOpen(false);
+    // 取消等於整組確認重新來一次，避免下次開啟時帶著上次的勾選
+    setConfirmed([]);
+  };
+
   const toggleConfirmation = (key) => {
     setConfirmed((current) =>
       current.includes(key) ? current.filter((item) => item !== key) : [...current, key],
@@ -243,13 +263,15 @@ export default function InjectionTab() {
   const showReport = hasReport && view === "report";
   const advisoryCount = result?.report?.advisories?.length ?? result?.report?.processed ?? 0;
   // 第一步的內部進度：讓流程列直接說出「下一個動作是什麼」，不必再靠額外提示文字
+  // 確認事項改在對話框內勾選，所以只有對話框開著且還沒勾完才叫「待確認」，
+  // 其餘只要有有效預覽，下一個動作就是注入。
   const composeHint = hasReport
     ? "已注入"
     : !preview
       ? "待驗證"
-      : readyToInject
-        ? "可注入"
-        : "待確認";
+      : confirmOpen && !readyToInject
+        ? "待確認"
+        : "可注入";
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-3">
@@ -400,9 +422,10 @@ export default function InjectionTab() {
                 className="hidden"
               />
 
+              {/* 驗證過就能按；勾選確認事項移到對話框裡完成 */}
               <button
-                onClick={runInject}
-                disabled={!readyToInject || busy !== ""}
+                onClick={() => setConfirmOpen(true)}
+                disabled={!preview || busy !== ""}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 transition disabled:opacity-50 disabled:pointer-events-none focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
               >
                 <Zap className="w-3.5 h-3.5" />
@@ -467,23 +490,6 @@ export default function InjectionTab() {
                   <EventSummaryRow key={summary.event_id} summary={summary} />
                 ))}
               </div>
-
-              <div className="border-t border-[var(--border)] mt-3 pt-3 space-y-2">
-                <h4 className="text-xs font-semibold text-[var(--muted-foreground)]">注入前確認</h4>
-                {required.map((key) => (
-                  <label key={key} className="flex items-start gap-2 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={confirmed.includes(key)}
-                      onChange={() => toggleConfirmation(key)}
-                      className="mt-0.5 accent-[var(--primary)] focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
-                    />
-                    <span className="text-[var(--muted-foreground)]">
-                      {CONFIRMATION_LABELS[key] || key}
-                    </span>
-                  </label>
-                ))}
-              </div>
             </div>
           ) : (
             !error && (
@@ -502,6 +508,42 @@ export default function InjectionTab() {
           <IncidentResponsePanel report={result.report} />
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmOpen && Boolean(preview)}
+        title="確認注入事件"
+        description={`${summaries.length} 件事件，對齊模擬時間 ${preview?.simulation_clock_time || "-"}`}
+        confirmLabel={busy === "inject" ? "注入中…" : "確認注入"}
+        cancelLabel="取消"
+        confirmDisabled={!readyToInject}
+        busy={busy === "inject"}
+        tone={preview?.contains_future_event ? "warning" : "default"}
+        onConfirm={confirmInject}
+        onCancel={cancelInject}
+      >
+        {preview?.contains_future_event && (
+          <Banner
+            tone="warning"
+            text="內容包含晚於當下模擬時間的事件，注入後會提前套用該時段的路網資料。"
+          />
+        )}
+        <div className="space-y-2">
+          {required.map((key) => (
+            <label key={key} className="flex items-start gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={confirmed.includes(key)}
+                onChange={() => toggleConfirmation(key)}
+                disabled={busy === "inject"}
+                className="mt-0.5 accent-[var(--primary)] focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
+              />
+              <span className="text-[var(--muted-foreground)]">
+                {CONFIRMATION_LABELS[key] || key}
+              </span>
+            </label>
+          ))}
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }
@@ -630,7 +672,7 @@ function ErrorCard({ error, keptPreview = false }) {
       )}
       {error.traceId && (
         <div className="font-mono text-xs text-[var(--muted-foreground)] mt-2">
-          trace {error.traceId}
+          追蹤編號 {error.traceId}
         </div>
       )}
     </div>
@@ -662,7 +704,7 @@ function ReferenceCard({ catalog, open, onToggle }) {
               {(catalog?.segments || []).map((segment) => (
                 <span
                   key={segment.segment_id}
-                  title={`${segment.name}｜容量 ${segment.capacity_vph} vph`}
+                  title={`${segment.name}｜承載容量 ${segment.capacity_vph} 輛/小時`}
                   className="font-mono text-[10px] px-1.5 py-0.5 rounded-sm bg-[var(--muted)] text-[var(--muted-foreground)]"
                 >
                   {segment.segment_id}

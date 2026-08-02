@@ -23,12 +23,19 @@ import DecisionTracePanel from "./DecisionTracePanel";
 import SopConformancePanel from "./SopConformancePanel";
 import AiReasoningTrace from "./AiReasoningTrace";
 import { ENGINE_STYLES } from "../lib/aiLabels";
+import { NARRATIVE_SOURCE_LABELS, trustStatement } from "../lib/explain";
 
 const NARRATIVE_SOURCES = {
-  ai_generated: { label: "AI 生成", tone: "info" },
-  ai_generated_partial: { label: "AI 生成（處置條列改用程式清單）", tone: "info" },
-  fallback: { label: "AI 未連線，以下為程式依 SOP 組出的敘述", tone: "warning" },
-  deadline_fallback: { label: "已進入 60 秒時限降級，改用程式敘述", tone: "warning" },
+  ai_generated: { label: NARRATIVE_SOURCE_LABELS.ai_generated, tone: "info" },
+  ai_generated_partial: {
+    label: NARRATIVE_SOURCE_LABELS.ai_generated_partial,
+    tone: "info",
+  },
+  fallback: { label: NARRATIVE_SOURCE_LABELS.fallback, tone: "warning" },
+  deadline_fallback: {
+    label: NARRATIVE_SOURCE_LABELS.deadline_fallback,
+    tone: "warning",
+  },
 };
 
 const TABS = [
@@ -48,7 +55,7 @@ function percent(value) {
  * 版面刻意做成「報告」而不是長篇對話輸出：
  *   1. 表頭是 KPI 欄位帶（分級／ETE／主疏散／通報語言／合規），指揮官掃一眼就有結論
  *   2. 細節分成四個頁籤，避免所有段落堆在同一條垂直捲軸上
- *      處置方案（要做什麼）｜判定依據（為什麼）｜AI 推理（思考過程）｜SOP 原文
+ *      處置方案（要做什麼）｜判定依據（為什麼）｜AI 推理（推理過程）｜SOP 原文
  *   3. 敘述文字只留 AI 那一段，其餘資訊一律欄位化或表格化
  *
  * 原本所有區塊平鋪展開，光是一個事件就要滑三、四螢，段落式敘述又和結構化數據混在
@@ -626,16 +633,16 @@ export default function AdvisoryCard({
                 <Section title="AI 在本事件中的角色">
                   <dl className="divide-y divide-[var(--border)] rounded-sm border border-[var(--border)]">
                     <Field label="分工">
-                      {trace?.engine_split?.statement ||
+                      {trustStatement(trace) ||
                         "所有門檻判定、路網篩選與公式運算均由程式完成，AI 只負責敘述。"}
                     </Field>
                     <Field label="敘述來源">
                       {narrativeSource?.label || advisory.ai_narrative_source || "—"}
                     </Field>
-                    <Field label="思考記錄">
+                    <Field label="推理記錄">
                       {reasoning?.thinking_available
-                        ? `已記錄 ${reasoning.thinking_block_count} 段推理、${reasoning.tool_call_count} 次工具核對`
-                        : reasoning?.note || "本事件未記錄到 AI 思考軌跡"}
+                        ? `已記錄 ${reasoning.thinking_block_count} 段推理、${reasoning.tool_call_count} 次資料核對`
+                        : reasoning?.note || "本事件未記錄到 AI 推理軌跡"}
                     </Field>
                   </dl>
                 </Section>
@@ -645,7 +652,7 @@ export default function AdvisoryCard({
                 ) : (
                   <p className="text-xs text-[var(--muted-foreground)]">
                     本事件的建議書敘述由程式依 SOP 判定結果組出（AI 未連線或已進入時限
-                    降級），因此沒有 AI 思考軌跡可展示。判定依據請見「判定依據」頁籤。
+                    降級），因此沒有 AI 推理軌跡可展示。判定依據請見「判定依據」頁籤。
                   </p>
                 )}
               </>

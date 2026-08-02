@@ -38,6 +38,27 @@ function badgeClass(level) {
   return "report-badge report-badge-normal";
 }
 
+/**
+ * 影像來源與取得方式的標注。
+ *
+ * 報告的影像優先擷取自監控頁面上正在播放的畫面（method 為 screen），
+ * 因此可如實聲明「與值班畫面同一幀」；退回後端代理端點時另外標明。
+ * 合成示意畫面絕不能標成政府公開影像，否則報告就在說謊。
+ */
+function snapshotOrigin(meta, camera) {
+  if (meta?.is_mock) return "影像來源：系統合成示意畫面（公開影像當時無法取得）";
+
+  const mode = meta?.mode || camera?.mode;
+  const source =
+    mode === "hls"
+      ? "影像來源：政府公開路口監視器直播"
+      : "影像來源：政府公開路口監視器快照";
+
+  return meta?.method === "screen"
+    ? `${source}，擷取自產製當時之監控畫面`
+    : `${source}，產製時另向影像代理端點取像`;
+}
+
 /** 報告編號：由資料時間與路段代號組成，同一時間點的同一路段編號固定可追溯。 */
 function reportNumber(simTime, segmentId) {
   const digits = String(simTime || "").replace(/\D/g, "");
@@ -57,6 +78,7 @@ export default function SegmentReport({
   aiSummary = null,
   camera = null,
   snapshotDataUrl = null,
+  snapshotMeta = null,
   generatedAt = "",
   triggerSegmentNames = [],
 }) {
@@ -433,9 +455,8 @@ export default function SegmentReport({
               <figcaption>
                 圖二　{camera?.name || "路段鄰近攝影機"}
                 {camera?.distance_m != null && `（距路段約 ${camera.distance_m} 公尺）`}
-                {camera?.mode === "hls"
-                  ? "；影像來源：政府公開路口監視器直播"
-                  : "；影像來源：政府公開路口監視器快照"}
+                {`；${snapshotOrigin(snapshotMeta, camera)}`}
+                {snapshotMeta?.captured_at && `；畫面攝於 ${snapshotMeta.captured_at}`}
               </figcaption>
             </figure>
           ) : (
@@ -443,8 +464,16 @@ export default function SegmentReport({
               本路段周邊無可用之公開即時影像，或影像於報告產製時無法取得。
             </p>
           )}
+          {snapshotDataUrl && snapshotMeta?.is_mock && (
+            <p className="report-note">
+              產製報告時該鏡頭的公開影像無法取得或已過時，上圖為系統合成之示意畫面，
+              不得作為現場路況之判讀依據。
+            </p>
+          )}
           <p className="report-note">
-            影像為報告產製時該路段的實際現地畫面，僅供輔助確認現場環境；
+            {snapshotMeta?.is_mock
+              ? "路段影像僅供輔助確認現場環境；"
+              : "影像為報告產製時該路段的實際現地畫面，僅供輔助確認現場環境；"}
             與模擬時間軸的車流數據並非同一時間來源，不參與分級判定、
             替代路徑計算或恢復時間估算。
           </p>

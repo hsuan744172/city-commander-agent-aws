@@ -10,6 +10,16 @@ import {
   TrendingUp,
 } from "lucide-react";
 import AutoAdvisoryPanel from "./AutoAdvisoryPanel";
+// 判定依據的收合殼層與措辭集中在 AlertToast：預警 toast 與這裡的研判卡
+// 呈現的是同一份 /api/alert-summary 負載，共用一份才不會兩邊說法不一致。
+import {
+  AI_FALLBACK_NOTE,
+  EvidenceDisclosure,
+  EvidenceRow,
+  EvidenceSection,
+  SopClauseDisclosure,
+  saturationPct,
+} from "./AlertToast";
 import SegmentReport from "./SegmentReport";
 import StreetCam from "./StreetCam";
 import TrendChart from "./TrendChart";
@@ -52,6 +62,8 @@ function nowStamp() {
  * 報告節點在螢幕上是隱藏的，直接寫 <img src="/api/..."> 有機會在列印對話框開啟時
  * 還沒下載完，印出來就是空框。改成先抓成 data URL，確認拿到畫面才進列印流程。
  * 端點是後端同源代理，不論鏡頭是直播或快照模式都取得到單張畫面。
+ *
+ * 這是退路：報告優先採用螢幕實際畫面的截圖（見 captureScreenSnapshot）。
  */
 async function loadSnapshotDataUrl(path) {
   const res = await fetch(`${path}?_=${Date.now()}`);
@@ -63,6 +75,55 @@ async function loadSnapshotDataUrl(path) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+}
+
+/** 這一幀的畫面來源狀態，用於在報告誠實標注（合成示意畫面不得標成真實影像）。 */
+async function loadFrameInfo(path) {
+  if (!path) return null;
+  try {
+    const res = await fetch(`${path}?_=${Date.now()}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 取得報告要嵌入的路段影像。
+ *
+ * 順序有意義：
+ *   1. 截取螢幕上正在播放的那一幀 — 報告與值班人員當下看到的畫面完全一致，
+ *      HLS 直播鏡頭也因此拿到真正的直播畫面，而不是來源不同的另一張靜態快照。
+ *   2. 截圖不可用時（尚未解碼、canvas 被跨來源污染）才退回後端 /snapshot 代理。
+ *
+ * 一併回傳來源標注資訊，讓報告能區分「真實現地影像」與「系統合成示意畫面」。
+ */
+async function resolveReportSnapshot(camera) {
+  if (!camera) return { dataUrl: null, meta: null };
+
+  const captured = typeof camera.capture === "function" ? camera.capture() : null;
+  if (captured?.dataUrl) {
+    return { dataUrl: captured.dataUrl, meta: captured };
+  }
+
+  if (!camera.snapshot_path) return { dataUrl: null, meta: null };
+
+  const [dataUrl, info] = await Promise.all([
+    loadSnapshotDataUrl(camera.snapshot_path),
+    loadFrameInfo(camera.frame_path),
+  ]);
+
+  return {
+    dataUrl,
+    meta: {
+      method: "proxy",
+      mode: camera.mode || "snapshot",
+      is_mock: Boolean(info?.is_mock),
+      captured_at: info?.captured_at || null,
+      age_seconds: info?.age_seconds ?? null,
+    },
+  };
 }
 
 /**
@@ -128,15 +189,17 @@ export default function SegmentMonitorTab({
     setExportError("");
     try {
       let snapshotDataUrl = null;
-      if (camera?.snapshot_path) {
-        try {
-          snapshotDataUrl = await loadSnapshotDataUrl(camera.snapshot_path);
-        } catch {
-          // 影像取不到不該擋住整份報告，報告內會註明無可用影像
-          snapshotDataUrl = null;
-        }
+      let snapshotMeta = null;
+      try {
+        const shot = await resolveReportSnapshot(camera);
+        snapshotDataUrl = shot.dataUrl;
+        snapshotMeta = shot.meta;
+      } catch {
+        // 影像取不到不該擋住整份報告，報告內會註明無可用影像
+        snapshotDataUrl = null;
+        snapshotMeta = null;
       }
-      setReportBundle({ snapshotDataUrl, generatedAt: nowStamp() });
+      setReportBundle({ snapshotDataUrl, snapshotMeta, generatedAt: nowStamp() });
     } catch (err) {
       setExportError(err?.message || "報告產製失敗");
     } finally {
@@ -304,6 +367,7 @@ export default function SegmentMonitorTab({
           aiSummary={alertSummary}
           camera={camera}
           snapshotDataUrl={reportBundle.snapshotDataUrl}
+          snapshotMeta={reportBundle.snapshotMeta}
           generatedAt={reportBundle.generatedAt}
           triggerSegmentNames={triggerSegmentNames}
         />
@@ -317,6 +381,10 @@ export default function SegmentMonitorTab({
  *
  * 摘要由語言模型撰寫，趨勢統計與門檻判定都在後端程式算完才交給模型，
  * 對應命題「摘要由 LLM 生成，門檻判定由程式運算」。畫面與匯出報告共用同一份內容。
+ *
+ * 敘述下方掛一個預設收合的「這段研判的依據數據」：把餵給模型的那份既算好事實逐項攤開
+ * （量測值、門檻、趨勢統計、城市應變定位、同時段全網狀況），指揮官可以逐個
+ * 核對敘述裡的數字，確認模型沒有自行編造。
  */
 function AiJudgementCard({ summary, loading, trend }) {
   const paragraphs = String(summary?.summary || "")
@@ -329,9 +397,7 @@ function AiJudgementCard({ summary, loading, trend }) {
         <Bot className="w-4 h-4 text-[var(--primary)]" />
         <h2 className="text-sm font-semibold">AI 值班指揮官研判</h2>
         {summary?.source === "fallback" && (
-          <span className="text-xs text-[var(--status-warning)]">
-            AI 未連線，以下為程式判定直述
-          </span>
+          <span className="text-xs text-[var(--status-warning)]">{AI_FALLBACK_NOTE}</span>
         )}
       </div>
 
@@ -374,6 +440,113 @@ function AiJudgementCard({ summary, loading, trend }) {
       ) : (
         <p className="text-sm text-[var(--muted-foreground)]">目前沒有可用的研判內容。</p>
       )}
+
+      {/* 研判還在產生時不掛依據區：敘述與依據應該一起出現，否則像是兩份資料 */}
+      {!loading && summary?.available !== false && (
+        <SegmentEvidence summary={summary} trend={trend} />
+      )}
     </div>
+  );
+}
+
+/**
+ * 單一路段的判定依據
+ *
+ * 攤開的就是 /api/alert-summary 交給模型的那份既算好事實：量測值、SOP 第 1 條
+ * 門檻與分級、程式算出的趨勢統計、城市應變定位與同時段全網狀況。指揮官可以
+ * 逐項核對敘述裡的每個數字，確認模型沒有自行編造。
+ *
+ * 收合殼層與措辭沿用 AlertToast 那一份，預警 toast 與這裡不會出現兩套寫法。
+ */
+function SegmentEvidence({ summary, trend }) {
+  if (!summary) return null;
+
+  const thresholds = summary.thresholds || {};
+  const context = summary.network_context || {};
+  const networkSopNumbers = context.triggered_sop_numbers || [];
+  const sopClauses = summary.sop_clauses || [];
+  const reachedA = trend?.reached_level_a_at;
+  const reachedB = trend?.reached_level_b_at;
+
+  return (
+    <EvidenceDisclosure className="pt-1">
+      <EvidenceSection title="本路段量測值（程式讀取的資料切片）">
+        <EvidenceRow label="飽和度" value={saturationPct(summary.saturation_score)} />
+        <EvidenceRow label="平均時速" value={`${summary.avg_speed} 公里`} />
+        <EvidenceRow label="車流量" value={`${summary.vehicle_count} 輛`} />
+        <EvidenceRow label="車道狀態" value={summary.lane_status_label || "—"} />
+        {summary.data_as_of && (
+          <EvidenceRow label="資料時間" value={summary.data_as_of} />
+        )}
+      </EvidenceSection>
+
+      <EvidenceSection title="分級與判定門檻（SOP 第 1 條）">
+        <EvidenceRow label="程式判定分級" value={summary.level_description || "—"} />
+        <EvidenceRow
+          label="A 級癱瘓"
+          value={`飽和度 ≥ ${saturationPct(thresholds.level_a ?? 0.95)}`}
+        />
+        <EvidenceRow
+          label="B 級壅擠"
+          value={`飽和度 ≥ ${saturationPct(thresholds.level_b ?? 0.85)}`}
+        />
+        <EvidenceRow
+          label="城市應變定位"
+          value={summary.is_trigger_segment ? "城市應變觸發路段" : "非觸發路段"}
+          note={
+            summary.is_trigger_segment
+              ? "達級別即啟動長綠燈時制"
+              : "依條文僅作燈號顯示與監控，不啟動長綠燈時制"
+          }
+        />
+      </EvidenceSection>
+
+      {trend ? (
+        <EvidenceSection title={`趨勢統計（近 ${trend.window_minutes} 分鐘，程式運算）`}>
+          <EvidenceRow
+            label="飽和度變化"
+            value={`${saturationPct(trend.first_saturation_score)} → ${saturationPct(
+              trend.current_saturation_score,
+            )}`}
+            note={`${trend.direction_label} ${Math.abs(
+              trend.delta_percentage_points,
+            )} 個百分點`}
+          />
+          <EvidenceRow
+            label="期間峰值"
+            value={saturationPct(trend.peak_saturation_score)}
+            note={`出現於 ${trend.peak_time}`}
+          />
+          {reachedA && <EvidenceRow label="首次達 A 級" value={reachedA} />}
+          {reachedB && <EvidenceRow label="首次達 B 級" value={reachedB} />}
+        </EvidenceSection>
+      ) : (
+        <EvidenceSection title="趨勢統計">
+          <p className="text-xs text-[var(--muted-foreground)]">
+            本時段沒有足夠的歷史量測點，未提供趨勢判讀。
+          </p>
+        </EvidenceSection>
+      )}
+
+      <EvidenceSection title="同時段全網狀況">
+        <EvidenceRow label="A 級癱瘓路段" value={`${context.level_a_count ?? 0} 條`} />
+        <EvidenceRow label="B 級壅擠路段" value={`${context.level_b_count ?? 0} 條`} />
+        <EvidenceRow
+          label="全網已觸發條款"
+          value={
+            networkSopNumbers.length > 0
+              ? `SOP 第 ${networkSopNumbers.join("、")} 條`
+              : "無"
+          }
+          note={
+            networkSopNumbers.length > 0
+              ? "屬人流與信令條款，非本路段車流判定範圍"
+              : null
+          }
+        />
+      </EvidenceSection>
+
+      <SopClauseDisclosure clauses={sopClauses} />
+    </EvidenceDisclosure>
   );
 }

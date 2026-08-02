@@ -20,7 +20,7 @@ const INITIAL_CHAT = [
   {
     role: "assistant",
     content:
-      "我是城市應變指揮官 AI 策略顧問。\n\n您可以向我提出任何 What-if 假設情境，例如：\n" +
+      "我是城市應變指揮官 AI 策略顧問。\n\n您可以提出 What-if 情境，例如：\n" +
       "• 若 BL17 人數增至 40,000 人怎麼辦？\n" +
       "• 忠孝東路與光復南路同時癱瘓的應變策略？\n" +
       "• 目前哪些基地台漫遊率超過 30%？\n" +
@@ -47,6 +47,10 @@ export default function App() {
 
   const inspectSegment = (segment) => {
     if (!segment?.segment_id) return;
+    // 穿透進路段即時監控時凍結時間：檢視與判讀期間路網資料不再跳動，
+    // 看到的數值與點擊當下一致。回儀表板時不自動恢復，由時間軸的
+    // 播放／LIVE 按鈕明確決定何時繼續。
+    stream.pause();
     setSelectedSegmentId(segment.segment_id);
     setActiveTab(SEGMENT_VIEW);
   };
@@ -71,7 +75,7 @@ export default function App() {
               <Shield className="w-5 h-5 text-[var(--primary-foreground)]" />
             </div>
             {/* 模擬時間不在標題旁重複顯示：時間軸的播放頭讀數（含秒）才是唯一來源 */}
-            <h1 className="text-lg font-bold">道路緊急應變系統</h1>
+            <h1 className="text-lg font-bold">城市緊急應變系統</h1>
           </div>
 
           <nav className="flex gap-1" aria-label="主要功能">

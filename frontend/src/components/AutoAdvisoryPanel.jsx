@@ -135,7 +135,7 @@ export default function AutoAdvisoryPanel({
                 <Clock className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--status-info)]" />
                 <div className="min-w-0">
                   <span className="text-[var(--foreground)]">
-                    預估恢復時間 {adv.ete_minutes} 分鐘
+                    預計恢復時間 {adv.ete_minutes} 分鐘
                   </span>
                   {adv.ete_breakdown && (
                     <div className="text-[var(--muted-foreground)] mt-0.5 leading-relaxed">

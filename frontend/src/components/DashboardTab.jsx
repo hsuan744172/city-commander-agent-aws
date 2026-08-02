@@ -20,7 +20,8 @@ import AlertCenter from "./AlertCenter";
  * 可回看過往每一筆預警的當時快照。
  *
  * 摘要向 /api/alert-summary 取得（LLM 生成），門檻判定仍在後端程式，
- * 對應命題「摘要由 LLM 生成，門檻判定由程式運算」。
+ * 對應命題「摘要由 LLM 生成，門檻判定由程式運算」。每筆快照連同當時的
+ * 門檻一起保存，toast 的「判定依據」才能標明摘要是依哪組門檻算出來的。
  */
 // 紀錄上限：Demo 的共同時間軸只有十幾格，留 20 筆足夠且不會無限成長
 const MAX_ALERT_HISTORY = 20;
@@ -119,11 +120,15 @@ export default function DashboardTab({ network, stream, onInspectSegment }) {
           level_description: s.level_description,
           saturation_score: s.saturation_score,
           avg_speed: s.avg_speed,
+          is_trigger_segment: true,
         })),
       monitoredAlerts: monitoredAlerts.map((m) => ({
         road_name: m.road_name,
         level_description: m.level_description,
       })),
+      // 門檻一起入快照：判定依據要標明「當時」用的是哪組門檻，
+      // 回看舊紀錄時不會被之後的設定覆寫，也不必在前端寫死 95%／85%
+      thresholds,
       summary: null,
       summaryState: "loading",
     };
@@ -142,7 +147,7 @@ export default function DashboardTab({ network, stream, onInspectSegment }) {
         label: focus.road_name,
       });
     }
-  }, [signature, timestamp, segments, monitoredAlerts, loadSummary]);
+  }, [signature, timestamp, segments, monitoredAlerts, thresholds, loadSummary]);
 
   return (
     // 填滿 App 給的剩餘高度：地圖與監測小卡吃掉可用空間，整頁不需要往下捲

@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight, Cpu, GitBranch } from "lucide-react";
 import { useState } from "react";
 import { cn } from "../lib/utils";
 import { ENGINE_STYLES } from "../lib/aiLabels";
+import { hasStepDetail, stepNarrative, trustStatement } from "../lib/explain";
 
 /**
  * 決策鏈（模組 4：判定依據展示）
@@ -36,10 +37,11 @@ export default function DecisionTracePanel({ trace }) {
         </div>
       </header>
 
-      {split.statement && (
+      {/* 第一層：一句話講完分工，不展開任何步驟就能判斷這份判定誰做的 */}
+      {trustStatement(trace) && (
         <p className="flex items-start gap-1.5 border-b border-[var(--border)] bg-[var(--muted)] px-4 py-2 text-xs leading-relaxed text-[var(--muted-foreground)]">
           <Cpu className="mt-0.5 h-3 w-3 shrink-0" />
-          {split.statement}
+          {trustStatement(trace)}
         </p>
       )}
 
@@ -72,8 +74,9 @@ function SplitChip({ engine, count }) {
 function TraceRow({ step }) {
   const [open, setOpen] = useState(false);
   const style = ENGINE_STYLES[step.engine] || ENGINE_STYLES.deterministic;
-  const hasDetail =
-    (step.inputs?.length || 0) > 0 || step.rule || step.formula || step.detail;
+  const hasDetail = hasStepDetail(step);
+  // 第二層：把這一步改寫成「因為…（依…）→ 所以…」，不必先讀懂欄位名稱
+  const { because, basis, therefore } = stepNarrative(step);
 
   return (
     <div className={cn(step.engine === "llm" && "bg-[var(--status-info)]/5")}>
@@ -116,8 +119,16 @@ function TraceRow({ step }) {
             ))}
           </div>
 
-          <p className="mt-1 text-sm leading-relaxed text-[var(--muted-foreground)]">
-            {step.output}
+          {/* 人話那一行：因為什麼數值、依哪一條、得到什麼結論 */}
+          {because && (
+            <p className="mt-1 text-xs leading-relaxed text-[var(--muted-foreground)]">
+              因為 {because}
+              {basis && <>，{basis}</>}
+            </p>
+          )}
+          <p className="mt-0.5 text-sm leading-relaxed">
+            {because && <span className="text-[var(--muted-foreground)]">所以 </span>}
+            {therefore}
           </p>
         </div>
 
@@ -163,10 +174,16 @@ function TraceRow({ step }) {
 
           {step.detail && <Labelled label="判定說明">{step.detail}</Labelled>}
 
+          {/* 第三層：模組代號只有要追程式碼的人才需要，再收一層不佔閱讀動線 */}
           {step.authority && (
-            <Labelled label="權威模組">
-              <code className="font-mono text-[10px]">{step.authority}</code>
-            </Labelled>
+            <details>
+              <summary className="cursor-pointer list-none text-xs text-[var(--muted-foreground)] transition hover:text-[var(--foreground)]">
+                技術細節（供稽核）
+              </summary>
+              <div className="mt-1 text-xs text-[var(--muted-foreground)]">
+                本步驟由 <code className="font-mono">{step.authority}</code> 負責運算。
+              </div>
+            </details>
           )}
         </div>
       )}
