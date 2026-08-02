@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { MapContainer, TileLayer, Marker, Polyline, Popup, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
+import { MAP_LINE_STYLE, routeColor } from "../lib/mapLineStyle";
 
 // ============================================================
 // 信義計畫區路段多點座標 (沿街道節點，確保貼合道路)
@@ -92,9 +93,40 @@ export default function IncidentMap({ advisory }) {
         <TileLayer url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" attribution="&copy; CartoDB" />
         <FlyTo center={incidentCoord} />
 
-        {affectedLine && <Polyline positions={affectedLine} pathOptions={{ color: "#DC2626", weight: 7, opacity: 0.85 }} />}
-        {primaryLine && <Polyline positions={primaryLine} pathOptions={{ color: "#16A34A", weight: 5, opacity: 0.9, dashArray: "12,6" }} />}
-        {secondaryLines.map((line, idx) => <Polyline key={idx} positions={line} pathOptions={{ color: "#2563EB", weight: 4, opacity: 0.7, dashArray: "8,8" }} />)}
+        {/* 線條的透明度／彩度／粗細統一由 lib/mapLineStyle 提供，與儀表板 3D 圖同一組設定 */}
+        {affectedLine && (
+          <Polyline
+            positions={affectedLine}
+            pathOptions={{
+              color: routeColor("affected"),
+              weight: MAP_LINE_STYLE.width.affected,
+              opacity: MAP_LINE_STYLE.opacity.affected,
+            }}
+          />
+        )}
+        {primaryLine && (
+          <Polyline
+            positions={primaryLine}
+            pathOptions={{
+              color: routeColor("primary"),
+              weight: MAP_LINE_STYLE.width.primary,
+              opacity: MAP_LINE_STYLE.opacity.primary,
+              dashArray: "12,6",
+            }}
+          />
+        )}
+        {secondaryLines.map((line, idx) => (
+          <Polyline
+            key={idx}
+            positions={line}
+            pathOptions={{
+              color: routeColor("secondary"),
+              weight: MAP_LINE_STYLE.width.secondary,
+              opacity: MAP_LINE_STYLE.opacity.secondary,
+              dashArray: "8,8",
+            }}
+          />
+        ))}
 
         <Marker position={incidentCoord} icon={incidentIcon}>
           <Popup><strong>{eid.location || affectedSeg}</strong></Popup>

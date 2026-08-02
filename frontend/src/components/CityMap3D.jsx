@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { Map as MaplibreMap, NavigationControl, Popup } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import {
+  MAP_LINE_STYLE,
+  CASING_COLOR,
+  SELECTED_OUTLINE_COLOR,
+  levelColor,
+  zoomWidth,
+  hitAreaWidth,
+} from "../lib/mapLineStyle";
+import { applyBasemapTone } from "../lib/basemapTone";
 
 // ============================================================
 // 信義計畫區路段座標 (lng, lat) — 來源：OpenStreetMap Overpass API
@@ -133,16 +142,6 @@ function buildStationGeoJSON(stations = [], roamingThreshold = Number.POSITIVE_I
 }
 
 /**
- * 後端分級 → 顏色（門檻只由後端規則決定）
- * A 級：紅色；B 級：橘黃；Normal：綠色
- */
-function levelToColor(level) {
-  if (level === "A") return "#D94F4F";
-  if (level === "B") return "#C8922A";
-  return "#3A9E74";
-}
-
-/**
  * 沿 LineString 插值取得某個進度 (0~1) 的座標點
  */
 function interpolateAlongLine(coords, t) {
@@ -252,7 +251,7 @@ function buildRoadGeoJSON(segments, selectedId = null) {
       vehicle_count: seg.vehicle_count,
       level: seg.level,
       lane_status: seg.lane_status,
-      color: levelToColor(seg.level),
+      color: levelColor(seg.level),
       selected: seg.segment_id === selectedId ? 1 : 0,
     };
     // 正向
@@ -328,6 +327,11 @@ export default function CityMap3D({
 
     map.on("load", () => {
       try {
+      // --- 底圖降彩 ---
+      // 必須在加入任何自訂圖層之前執行，此時樣式裡只有底圖圖層，
+      // 才不會連我們的路段分級色與站點色一起洗掉。
+      applyBasemapTone(map);
+
       // --- 3D 建築圖層（非關鍵增強，失敗不得阻斷路網） ---
       try {
         const layers = map.getStyle().layers || [];
@@ -395,13 +399,9 @@ export default function CityMap3D({
         paint: {
           "line-color": "#000000",
           "line-opacity": 0.01,
-          // 命中區域需覆蓋加寬後的路面，否則點擊會落在路面上卻沒反應
-          "line-width": [
-            "interpolate", ["linear"], ["zoom"],
-            13, 14,
-            16, 22,
-            18, 32,
-          ],
+          // 命中區域需覆蓋加寬後的路面，否則點擊會落在路面上卻沒反應。
+          // 寬度由 MAP_LINE_STYLE.width.casing 換算，路面調細時命中區同步收斂但保有下限。
+          "line-width": hitAreaWidth(),
         },
         layout: {
           "line-cap": "round",
@@ -416,15 +416,10 @@ export default function CityMap3D({
         source: "traffic-roads",
         filter: ["==", ["get", "selected"], 1],
         paint: {
-          "line-color": "#BA56DE",
-          "line-width": [
-            "interpolate", ["linear"], ["zoom"],
-            13, 12,
-            16, 22,
-            18, 34,
-          ],
+          "line-color": SELECTED_OUTLINE_COLOR,
+          "line-width": zoomWidth(MAP_LINE_STYLE.width.selected),
           "line-blur": 0,
-          "line-opacity": 0.55,
+          "line-opacity": MAP_LINE_STYLE.opacity.selected,
         },
         layout: {
           "line-cap": "round",
@@ -438,15 +433,10 @@ export default function CityMap3D({
         type: "line",
         source: "traffic-roads",
         paint: {
-          "line-color": "#5A6472",
-          "line-width": [
-            "interpolate", ["linear"], ["zoom"],
-            13, 9,
-            16, 17,
-            18, 27,
-          ],
+          "line-color": CASING_COLOR,
+          "line-width": zoomWidth(MAP_LINE_STYLE.width.casing),
           "line-blur": 0,
-          "line-opacity": 0.9,
+          "line-opacity": MAP_LINE_STYLE.opacity.casing,
         },
         layout: {
           "line-cap": "round",
@@ -461,13 +451,9 @@ export default function CityMap3D({
         source: "traffic-roads",
         paint: {
           "line-color": ["get", "color"],
-          "line-width": [
-            "interpolate", ["linear"], ["zoom"],
-            13, 6,
-            16, 13,
-            18, 21,
-          ],
+          "line-width": zoomWidth(MAP_LINE_STYLE.width.fill),
           "line-blur": 0,
+          "line-opacity": MAP_LINE_STYLE.opacity.fill,
         },
         layout: {
           "line-cap": "round",
@@ -494,7 +480,7 @@ export default function CityMap3D({
           ],
           "circle-color": "#ffffff",
           "circle-blur": 0,
-          "circle-opacity": 0.95,
+          "circle-opacity": MAP_LINE_STYLE.opacity.dots,
         },
       });
 
@@ -783,10 +769,11 @@ export default function CityMap3D({
       {/* 圖例 */}
       <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-md text-xs z-10">
         <div className="font-semibold text-gray-700 mb-1.5">路段飽和度</div>
+        {/* 圖例色點直接取用線條顏色，調整彩度時不會和地圖脫鉤 */}
         <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full" style={{ background: "#3A9E74" }} />正常</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full" style={{ background: "#C8922A" }} />壅擠</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full" style={{ background: "#D94F4F" }} />癱瘓</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full" style={{ background: levelColor("NORMAL") }} />正常</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full" style={{ background: levelColor("B") }} />壅擠</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full" style={{ background: levelColor("A") }} />癱瘓</span>
         </div>
       </div>
     </div>
