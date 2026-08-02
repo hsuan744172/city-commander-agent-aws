@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Bot,
+  ChevronRight,
   Gauge,
   Loader2,
   Maximize2,
   Minimize2,
   RotateCcw,
+  ScanSearch,
   Send,
   Sparkles,
   User,
@@ -14,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { TOOL_LABELS } from "../lib/aiLabels";
+import { verifiabilityNote } from "../lib/explain";
 import AiReasoningTrace from "./AiReasoningTrace";
 
 const SUGGESTIONS = [
@@ -181,77 +184,114 @@ export default function AdvisorChat({
               )}
             >
               {msg.role === "assistant" && msg.confidence && (
-                <details className="mb-2 w-fit">
-                  <summary
-                    className={cn(
-                      "flex cursor-pointer list-none items-center gap-1.5 rounded-sm border px-2 py-1 text-xs font-medium",
-                      msg.confidence.level === "high"
-                        ? "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-[var(--status-success)]"
-                        : msg.confidence.level === "medium"
-                          ? "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-[var(--status-warning)]"
-                          : "border-[var(--status-error)]/40 bg-[var(--status-error)]/10 text-[var(--status-error)]",
-                    )}
-                  >
-                    <Gauge className="w-3.5 h-3.5" />
-                    {msg.confidence.label} {msg.confidence.score}%
-                  </summary>
-                  <div className="mt-1.5 rounded-md border border-[var(--border)] bg-[var(--background)] p-2.5 text-xs text-[var(--muted-foreground)]">
-                    {msg.confidence.evidence_sources?.length > 0 && (
-                      <div className="mb-1">
-                        證據來源：{msg.confidence.evidence_sources.join("、")}
-                      </div>
-                    )}
-                    <ul className="space-y-0.5">
-                      {msg.confidence.reasons?.map((reason) => (
-                        <li key={reason}>・{reason}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </details>
+                <div
+                  className={cn(
+                    "mb-2 flex w-fit items-center gap-1.5 rounded-sm border px-2 py-1 text-xs font-medium",
+                    msg.confidence.level === "high"
+                      ? "border-[var(--status-success)]/40 bg-[var(--status-success)]/10 text-[var(--status-success)]"
+                      : msg.confidence.level === "medium"
+                        ? "border-[var(--status-warning)]/40 bg-[var(--status-warning)]/10 text-[var(--status-warning)]"
+                        : "border-[var(--status-error)]/40 bg-[var(--status-error)]/10 text-[var(--status-error)]",
+                  )}
+                >
+                  <Gauge className="w-3.5 h-3.5" />
+                  {msg.confidence.label} {msg.confidence.score}%
+                </div>
               )}
               <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
 
-              {/* AI 思考過程：模型的逐步推理與工具往返（模組 4 的思維鏈記錄） */}
-              {msg.reasoning && (
-                <div className="mt-2 border-t border-[var(--border)] pt-2">
-                  <AiReasoningTrace reasoning={msg.reasoning} compact />
-                </div>
-              )}
+              {/*
+                「AI 如何得到這個答案」把可驗證的東西收在同一個入口：
+                查了哪些確定性數據、引用哪幾條條文、信心度為何如此、
+                以及模型的逐步推理。原本這些散成四塊各自收合，
+                使用者要判斷「AI 有沒有亂講」得自己拼湊。
+              */}
+              {msg.role === "assistant" &&
+                (msg.toolsUsed?.length > 0 ||
+                  msg.citedClauses?.length > 0 ||
+                  msg.reasoning ||
+                  msg.confidence) && (
+                  <details className="group mt-2 border-t border-[var(--border)] pt-2">
+                    <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-[var(--status-info)] transition hover:text-[var(--foreground)]">
+                      <ChevronRight className="w-3.5 h-3.5 shrink-0 transition-transform group-open:rotate-90" />
+                      <ScanSearch className="w-3.5 h-3.5 shrink-0" />
+                      AI 如何得到這個答案
+                      <span className="font-normal text-[var(--muted-foreground)] group-open:hidden">
+                        （點擊展開）
+                      </span>
+                    </summary>
 
-              {/* 實際呼叫的確定性計算工具 */}
-              {msg.toolsUsed?.length > 0 && (
-                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                  <Wrench className="w-3 h-3 text-[var(--muted-foreground)]" />
-                  {msg.toolsUsed.map((tool) => (
-                    <span
-                      key={tool}
-                      className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[var(--accent)] text-[var(--accent-foreground)]"
-                    >
-                      {TOOL_LABELS[tool] || tool}
-                    </span>
-                  ))}
-                </div>
-              )}
+                    <div className="mt-2 space-y-2.5 border-l-2 border-[var(--status-info)]/30 pl-2.5">
+                      <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
+                        {verifiabilityNote({
+                          toolsUsed: msg.toolsUsed,
+                          citedClauses: msg.citedClauses,
+                        })}
+                      </p>
 
-              {/* 引用的 SOP 條文原文 */}
-              {msg.citedClauses?.length > 0 && (
-                <details className="mt-2">
-                  <summary className="text-xs text-[var(--muted-foreground)] cursor-pointer">
-                    引用條文原文（
-                    {msg.citedClauses.map((c) => `第 ${c.sop_number} 條`).join("、")}）
-                  </summary>
-                  <div className="mt-1.5 space-y-1.5">
-                    {msg.citedClauses.map((c) => (
-                      <pre
-                        key={c.sop_number}
-                        className="font-mono text-xs whitespace-pre-wrap bg-[var(--muted)] p-2.5 rounded-md text-[var(--muted-foreground)]"
-                      >
-                        {c.text}
-                      </pre>
-                    ))}
-                  </div>
-                </details>
-              )}
+                      {msg.toolsUsed?.length > 0 && (
+                        <div>
+                          <div className="mb-1 text-xs font-semibold">
+                            查詢的確定性資料
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Wrench className="w-3 h-3 shrink-0 text-[var(--muted-foreground)]" />
+                            {msg.toolsUsed.map((tool) => (
+                              <span
+                                key={tool}
+                                className="rounded-sm bg-[var(--accent)] px-1.5 py-0.5 text-xs text-[var(--accent-foreground)]"
+                              >
+                                {TOOL_LABELS[tool] || tool}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {msg.confidence?.reasons?.length > 0 && (
+                        <div>
+                          <div className="mb-1 text-xs font-semibold">
+                            信心度判定理由
+                          </div>
+                          {msg.confidence.evidence_sources?.length > 0 && (
+                            <p className="mb-0.5 text-xs text-[var(--muted-foreground)]">
+                              證據來源：{msg.confidence.evidence_sources.join("、")}
+                            </p>
+                          )}
+                          <ul className="space-y-0.5 text-xs text-[var(--muted-foreground)]">
+                            {msg.confidence.reasons.map((reason) => (
+                              <li key={reason}>・{reason}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {msg.reasoning && <AiReasoningTrace reasoning={msg.reasoning} compact />}
+
+                      {msg.citedClauses?.length > 0 && (
+                        <details>
+                          <summary className="cursor-pointer list-none text-xs text-[var(--muted-foreground)] transition hover:text-[var(--foreground)]">
+                            引用條文原文（
+                            {msg.citedClauses
+                              .map((c) => `第 ${c.sop_number} 條`)
+                              .join("、")}
+                            ）
+                          </summary>
+                          <div className="mt-1.5 space-y-1.5">
+                            {msg.citedClauses.map((c) => (
+                              <pre
+                                key={c.sop_number}
+                                className="whitespace-pre-wrap rounded-md bg-[var(--muted)] p-2.5 font-mono text-xs text-[var(--muted-foreground)]"
+                              >
+                                {c.text}
+                              </pre>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  </details>
+                )}
 
               {(msg.model || msg.dataAsOf) && (
                 <div className="text-xs text-[var(--muted-foreground)] mt-2 border-t border-[var(--border)] pt-1 flex items-center gap-2 flex-wrap">
@@ -314,7 +354,7 @@ export default function AdvisorChat({
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) send();
             }}
-            placeholder="輸入 What-if 情境問題..."
+            placeholder="輸入 What-if 情境問題…"
             className="flex-1 min-w-0 bg-[var(--secondary)] border border-[var(--input)] rounded-md px-3 py-2 text-sm placeholder-[var(--muted-foreground)] focus:outline-none focus:ring-[3px] focus:ring-[var(--ring)]/30 transition"
           />
           <button

@@ -1,5 +1,6 @@
 import { History, Loader2, X } from "lucide-react";
 import { cn } from "../lib/utils";
+import { AI_FALLBACK_NOTE } from "./AlertToast";
 
 /**
  * 預警紀錄
@@ -80,9 +81,17 @@ export default function AlertHistoryPanel({ history, activeId, onSelect, onClose
                     產生摘要中...
                   </span>
                 ) : (
-                  <p className="mt-0.5 text-sm text-[var(--muted-foreground)] line-clamp-2">
-                    {entry.summary?.summary || "無摘要（AI 未回應）"}
-                  </p>
+                  <>
+                    {/* 措辭與 toast、路段研判共用一份，清單裡不另造簡寫 */}
+                    {entry.summary?.source === "fallback" && (
+                      <p className="mt-0.5 text-xs text-[var(--status-warning)]">
+                        {AI_FALLBACK_NOTE}
+                      </p>
+                    )}
+                    <p className="mt-0.5 text-sm text-[var(--muted-foreground)] line-clamp-2">
+                      {entry.summary?.summary || "無摘要（AI 未回應）"}
+                    </p>
+                  </>
                 )}
               </button>
             </li>

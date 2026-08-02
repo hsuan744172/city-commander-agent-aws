@@ -12,7 +12,7 @@ export const TOOL_LABELS = {
   crowd_status: "查詢人流與漫遊",
   sop_trigger_status: "查詢 SOP 觸發狀態",
   evacuation_route: "計算疏散路徑",
-  recovery_time: "計算 ETE",
+  recovery_time: "計算恢復時間",
   signal_plan: "查詢號誌與警力處置",
   station_detail: "查詢基地台明細",
   network_geometry: "查詢路網幾何",

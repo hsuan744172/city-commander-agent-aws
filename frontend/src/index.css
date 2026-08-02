@@ -406,3 +406,226 @@ body {
 .report-page-break {
   break-before: page;
 }
+
+/* ==========================================================================
+ * 交控中心建議書（事件注入 → 匯出 PDF）
+ *
+ * 沿用上方路段報告的 #print-root 機制：節點由 IncidentReport 以 portal 掛在
+ * body 底下，螢幕上永遠隱藏，只有列印時才顯示（見前面的 @media print 區塊）。
+ *
+ * 版面刻意與 .report 分開命名（.incident-report 前綴），兩份報告的欄寬、章節
+ * 編號與分頁規則不同，不共用樣式以免互相牽動。
+ *
+ * 黑白列印可讀：級別一律以文字標示（A 級（癱瘓）／B 級（壅擠）／正常），
+ * 底色只作為視覺分隔，不承載任何判讀資訊。
+ * ========================================================================== */
+
+.incident-report {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.6;
+  color: #111111;
+  background: #ffffff;
+}
+
+.incident-report-header {
+  text-align: center;
+  border-bottom: 2px solid #111111;
+  padding-bottom: 7px;
+  margin-bottom: 12px;
+}
+
+.incident-report-agency {
+  font-size: 11pt;
+  letter-spacing: 0.18em;
+  margin-bottom: 2px;
+}
+
+.incident-report-title {
+  font-size: 17pt;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin: 2px 0;
+}
+
+.incident-report-subtitle {
+  font-size: 9pt;
+  color: #4a5a55;
+}
+
+.incident-report-meta {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9.5pt;
+  margin-bottom: 13px;
+}
+
+.incident-report-meta th,
+.incident-report-meta td {
+  border: 1px solid #9aa8a3;
+  padding: 4px 7px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.incident-report-meta th {
+  background: #eef3f1;
+  font-weight: 600;
+  white-space: nowrap;
+  width: 16%;
+}
+
+.incident-report-section {
+  margin-bottom: 13px;
+}
+
+.incident-report-section > h2 {
+  font-size: 11.5pt;
+  font-weight: 700;
+  border-left: 4px solid #111111;
+  padding-left: 7px;
+  margin: 0 0 6px;
+  break-after: avoid;
+}
+
+.incident-report-section > p {
+  margin: 0 0 5px;
+}
+
+.incident-report-kv,
+.incident-report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9.5pt;
+}
+
+.incident-report-kv + .incident-report-table,
+.incident-report-table + .incident-report-table {
+  margin-top: 7px;
+}
+
+.incident-report-kv caption,
+.incident-report-table caption {
+  text-align: left;
+  font-size: 9pt;
+  color: #4a5a55;
+  padding-bottom: 3px;
+}
+
+.incident-report-kv th,
+.incident-report-kv td,
+.incident-report-table th,
+.incident-report-table td {
+  border: 1px solid #9aa8a3;
+  padding: 4px 7px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.incident-report-kv th {
+  background: #eef3f1;
+  font-weight: 600;
+  white-space: nowrap;
+  width: 22%;
+}
+
+.incident-report-table thead th {
+  background: #eef3f1;
+  font-weight: 600;
+}
+
+.incident-report-table .num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.incident-report-inline-note {
+  display: block;
+  font-size: 8.5pt;
+  color: #4a5a55;
+  margin-top: 2px;
+}
+
+.incident-report-narrative {
+  border: 1px solid #9aa8a3;
+  border-left: 4px solid #111111;
+  padding: 8px 10px;
+}
+
+.incident-report-narrative p {
+  margin: 0 0 5px;
+  white-space: pre-wrap;
+}
+
+.incident-report-narrative p:last-child {
+  margin-bottom: 0;
+}
+
+.incident-report-messages {
+  margin: 7px 0 0;
+}
+
+.incident-report-message {
+  border: 1px solid #9aa8a3;
+  padding: 5px 8px;
+  margin-bottom: 5px;
+}
+
+.incident-report-message dt {
+  font-size: 9pt;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.incident-report-message dd {
+  margin: 0;
+  font-size: 9.5pt;
+  line-height: 1.55;
+}
+
+.incident-report-lang-code {
+  font-weight: 400;
+  color: #4a5a55;
+}
+
+.incident-report-note {
+  font-size: 8.5pt;
+  color: #4a5a55;
+  margin: 4px 0 0;
+}
+
+.incident-report-footer {
+  border-top: 1px solid #9aa8a3;
+  padding-top: 6px;
+  margin-top: 12px;
+  font-size: 8.5pt;
+  color: #4a5a55;
+}
+
+@media print {
+  /* 每筆事件獨立一頁，最後一頁不要再多帶一張空白 */
+  .incident-report-page {
+    break-after: page;
+  }
+
+  .incident-report-page:last-child {
+    break-after: auto;
+  }
+
+  /* 短區塊不允許被切開；長表格（全路段佐證）仍需跨頁，只保住列與表頭 */
+  .incident-report-keep,
+  .incident-report-kv,
+  .incident-report-message,
+  .incident-report-narrative,
+  .incident-report-footer {
+    break-inside: avoid;
+  }
+
+  .incident-report-table tr {
+    break-inside: avoid;
+  }
+
+  .incident-report-table thead {
+    display: table-header-group;
+  }
+}

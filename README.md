@@ -81,8 +81,8 @@ ECS Fargate task（1024 CPU / 2048 MB）SG: 僅 ALB → :8080
 | `segment_coordinates.json` | 只在本地使用 | 路段座標，`scripts/build_camera_map.py` 產生攝影機對照表的輸入 |
 | `live_incidents.json` | **不放 S3** | 事件注入範本，由操作者選用或上傳 |
 
-`backend/data_source.py` 統一取用：設定 `S3_DATA_BUCKET` 時優先讀 S3 並快取到本機，
-讀取失敗（無桶、無權限、物件不存在）自動退回映像內的 `data/`，服務不中斷。
+執行時的資料一律經 `backend/data_source.py` 取用：設定 `S3_DATA_BUCKET` 時優先讀 S3
+並快取到本機，讀取失敗（無桶、無權限、物件不存在）自動退回映像內的 `data/`，服務不中斷。
 目前來源可由 `GET /api/health` 的 `data_source` 欄位查看。部署腳本同步 `data/` 到 S3 時
 已排除 `live_incidents.json`。
 

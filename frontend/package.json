@@ -11,12 +11,10 @@
   "dependencies": {
     "clsx": "^2.1.0",
     "hls.js": "^1.6.16",
-    "leaflet": "^1.9.4",
     "lucide-react": "^0.500.0",
     "maplibre-gl": "^6.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-leaflet": "^5.0.0",
     "recharts": "^2.15.0",
     "tailwind-merge": "^3.0.0",
     "three": "^0.185.1"

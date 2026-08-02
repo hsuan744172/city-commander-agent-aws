@@ -360,7 +360,7 @@ export default function StreetCam({
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
             <VideoOff className="w-8 h-8 text-[var(--muted-foreground)]" />
             <span className="text-xs text-[var(--muted)]">
-              {loadState === "loading" && "載入攝影機清單..."}
+              {loadState === "loading" && "載入攝影機清單…"}
               {loadState === "error" && "攝影機清單取得失敗"}
               {loadState === "empty" && (segmentId ? "該路段附近無公開即時影像" : emptyHint)}
               {loadState === "idle" && emptyHint}
@@ -400,7 +400,7 @@ export default function StreetCam({
           <p className="text-xs text-[var(--muted-foreground)] leading-relaxed">
             此影像為該路段目前的實際路況畫面，用於輔助確認現地環境；
             <span className="font-medium">與模擬時間軸的車流數據無關</span>，
-            不參與 SOP 分級判定、替代路徑計算或 ETE 估算。
+            不參與 SOP 分級判定、替代路徑計算或恢復時間估算。
           </p>
           {source && (
             <a

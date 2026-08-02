@@ -38,14 +38,25 @@ function CustomTooltip({ active, payload, label, levelA = 0.95, levelB = 0.85 })
           .sort((a, b) => b.value - a.value)
           .map((p, i) => {
             const pct = Math.round(p.value * 100);
-            const icon = p.value >= levelA ? "🔴" : p.value >= levelB ? "🟡" : "🟢";
             return (
               <div key={i} className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }} />
                   <span className="text-xs text-[var(--foreground)]">{p.name}</span>
                 </div>
-                <span className="text-xs font-bold">{icon} {pct}%</span>
+                <span
+                  className="text-xs font-bold"
+                  style={{
+                    color:
+                      p.value >= levelA
+                        ? "var(--status-error)"
+                        : p.value >= levelB
+                          ? "var(--status-warning)"
+                          : "var(--status-success)",
+                  }}
+                >
+                  {pct}%
+                </span>
               </div>
             );
           })}
@@ -169,7 +180,7 @@ export default function TrendChart({
           className="flex items-center justify-center text-[var(--muted-foreground)] text-sm"
           style={{ height: chartHeight }}
         >
-          {loading ? "載入中..." : "此時間點尚無趨勢資料"}
+          {loading ? "載入中…" : "此時間點尚無趨勢資料"}
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={chartHeight}>
