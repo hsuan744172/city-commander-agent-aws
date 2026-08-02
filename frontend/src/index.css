@@ -100,3 +100,28 @@ body {
 .cc-map-popup .maplibregl-popup-tip {
   pointer-events: none;
 }
+
+/*
+ * Toast 進場動畫（自左上角滑入）
+ * 尊重系統的「減少動態效果」偏好設定。
+ */
+@keyframes cc-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.cc-toast-in {
+  animation: cc-toast-in 160ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-toast-in {
+    animation: none;
+  }
+}
