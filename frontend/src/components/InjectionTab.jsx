@@ -4,9 +4,10 @@ import {
   ArrowDown,
   ArrowUp,
   CheckCircle2,
+  ChevronRight,
   ClipboardCheck,
-  Clock,
   FileJson,
+  Lock,
   History,
   Minus,
   Upload,
@@ -84,6 +85,8 @@ export default function InjectionTab() {
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
   const [showReferences, setShowReferences] = useState(false);
+  // "compose"＝注入設定，"report"＝處置建議書；兩者共用滿高區域，切換不重建內容
+  const [view, setView] = useState("compose");
   const fileRef = useRef(null);
 
   const loadHistory = useCallback(async () => {
@@ -124,6 +127,7 @@ export default function InjectionTab() {
     setError(null);
     setResult(null);
     setUploadFailed(false);
+    setView("compose");
   };
 
   const updateDraft = (text) => {
@@ -208,6 +212,8 @@ export default function InjectionTab() {
         adminToken,
       });
       setResult(body);
+      // 注入成功後直接把滿高區域讓給建議書，不用往下滑
+      if (body?.report) setView("report");
       loadHistory();
     } catch (exc) {
       setError(exc);
@@ -233,37 +239,62 @@ export default function InjectionTab() {
     }
   }, [draft]);
 
+  const hasReport = Boolean(result?.report);
+  const showReport = hasReport && view === "report";
+  const advisoryCount = result?.report?.advisories?.length ?? result?.report?.processed ?? 0;
+  // 第一步的內部進度：讓流程列直接說出「下一個動作是什麼」，不必再靠額外提示文字
+  const composeHint = hasReport
+    ? "已注入"
+    : !preview
+      ? "待驗證"
+      : readyToInject
+        ? "可注入"
+        : "待確認";
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-end justify-between gap-3 flex-wrap">
-        <div>
-          <h2 className="text-xl font-bold">事件注入介面</h2>
-          <p className="text-sm text-[var(--muted-foreground)]">
-            以 live_incidents.json 格式注入路面塌陷、號誌故障等事件，驗證通過並確認後才會啟動應變流程。
-          </p>
-        </div>
-        {catalog?.sim_time && (
-          <div className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
-            <Clock className="w-3.5 h-3.5" />
-            當下模擬時間 {catalog.sim_time}
-          </div>
+    <div className="h-full min-h-0 flex flex-col gap-3">
+      <div className="shrink-0 space-y-3 empty:hidden">
+        {catalogError && <Banner tone="error" text={`無法載入注入目錄：${catalogError}`} />}
+        {catalog?.template_error && <Banner tone="warning" text={catalog.template_error} />}
+        {catalog?.source_errors?.length > 0 && (
+          <Banner tone="warning" text={`資料來源異常：${catalog.source_errors.join("；")}`} />
         )}
       </div>
 
-      {catalogError && <Banner tone="error" text={`無法載入注入目錄：${catalogError}`} />}
-      {catalog?.template_error && <Banner tone="warning" text={catalog.template_error} />}
-      {catalog?.source_errors?.length > 0 && (
-        <Banner tone="warning" text={`資料來源異常：${catalog.source_errors.join("；")}`} />
-      )}
+      {/*
+        流程列取代原本的兩顆切換鈕：從頭到尾都在，說明「現在在哪一步、下一步做什麼」。
+        第二步在注入完成前是鎖住的狀態，注入成功後自動成為當前步驟，兩步的內容都保持掛載。
+      */}
+      <nav aria-label="事件注入流程" className="shrink-0 flex items-center gap-1.5">
+        <FlowStep
+          index={1}
+          label="編輯與驗證"
+          hint={composeHint}
+          current={!showReport}
+          done={hasReport}
+          onClick={() => setView("compose")}
+        />
+        <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--muted-foreground)]" />
+        <FlowStep
+          index={2}
+          label="處置建議書"
+          hint={hasReport ? `${advisoryCount} 件` : "注入後開放"}
+          current={showReport}
+          locked={!hasReport}
+          onClick={() => setView("report")}
+        />
+      </nav>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+      <div
+        className={cn(
+          "flex-1 min-h-0 flex flex-col xl:flex-row gap-4 overflow-y-auto xl:overflow-hidden",
+          showReport && "hidden",
+        )}
+      >
         {/* 左側：來源與編輯 */}
-        <div className="space-y-4">
-          <div className={CARD}>
-            <h3 className={cn(SECTION_HEADING, "mb-2")}>事件範本</h3>
-            <p className="text-xs text-[var(--muted-foreground)] mb-3">
-              取自 data/live_incidents.json，點選即附加到下方內容。
-            </p>
+        <div className="xl:flex-1 xl:min-h-0 flex flex-col gap-4 xl:overflow-y-auto">
+          <div className={cn(CARD, "shrink-0")}>
+            <h3 className={cn(SECTION_HEADING, "mb-3")}>事件範本</h3>
             <div className="flex flex-wrap gap-1.5">
               {(catalog?.templates || []).map((template) => (
                 <button
@@ -294,8 +325,8 @@ export default function InjectionTab() {
             </div>
           </div>
 
-          <div className={CARD}>
-            <div className="flex items-center justify-between gap-2 mb-2">
+          <div className={cn(CARD, "xl:flex-1 xl:min-h-0 flex flex-col")}>
+            <div className="shrink-0 flex items-center justify-between gap-2 mb-2">
               <h3 className={SECTION_HEADING}>注入內容</h3>
               <span className="text-xs text-[var(--muted-foreground)]">
                 {eventCount === null ? "JSON 格式錯誤" : `${eventCount} 件`}
@@ -303,17 +334,21 @@ export default function InjectionTab() {
               </span>
             </div>
 
+            {/* 編輯區吃掉左欄剩餘高度，讓整頁不需要外層捲動 */}
             <textarea
               value={draft}
               onChange={(event) => updateDraft(event.target.value)}
               spellCheck={false}
-              rows={16}
+              rows={12}
               aria-label="事件注入內容 JSON"
-              className={cn(FIELD, "font-mono text-xs leading-relaxed resize-y")}
+              className={cn(
+                FIELD,
+                "font-mono text-xs leading-relaxed resize-none xl:flex-1 xl:min-h-[140px]",
+              )}
               placeholder='[{"event_id": "...", "type": "...", "affected_segment": "RD_TPE_002", ...}]'
             />
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+            <div className="shrink-0 grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
               <label className="space-y-1">
                 <span className="text-xs text-[var(--muted-foreground)]">
                   對齊模擬時間（留空＝當下）
@@ -339,7 +374,7 @@ export default function InjectionTab() {
               )}
             </div>
 
-            <div className="flex items-center gap-2 mt-3 flex-wrap">
+            <div className="shrink-0 flex items-center gap-2 mt-3 flex-wrap">
               <button
                 onClick={runPreview}
                 disabled={busy !== "" || !draft.trim()}
@@ -374,23 +409,19 @@ export default function InjectionTab() {
                 {busy === "inject" ? "注入中…" : "注入系統"}
               </button>
             </div>
-
-            {preview && !readyToInject && (
-              <p className="text-xs text-[var(--muted-foreground)] mt-2">
-                請先勾選右側確認項目才能注入。
-              </p>
-            )}
           </div>
 
-          <ReferenceCard
-            catalog={catalog}
-            open={showReferences}
-            onToggle={() => setShowReferences((open) => !open)}
-          />
+          <div className="shrink-0">
+            <ReferenceCard
+              catalog={catalog}
+              open={showReferences}
+              onToggle={() => setShowReferences((open) => !open)}
+            />
+          </div>
         </div>
 
         {/* 右側：驗證結果與紀錄 */}
-        <div className="space-y-4">
+        <div className="xl:flex-1 xl:min-h-0 space-y-4 xl:overflow-y-auto">
           {error && (
             <ErrorCard error={error} keptPreview={uploadFailed && Boolean(preview)} />
           )}
@@ -408,9 +439,6 @@ export default function InjectionTab() {
                 </div>
                 <div className="font-mono text-xs">{result.injection?.injection_id}</div>
               </div>
-              <p className="text-xs text-[var(--muted-foreground)] mt-2">
-                完整處置建議書已在本頁下方展開，無需切換頁面即可檢視路徑、SOP 與發布通報。
-              </p>
             </div>
           )}
 
@@ -460,8 +488,7 @@ export default function InjectionTab() {
           ) : (
             !error && (
               <div className={cn(CARD, "text-sm text-[var(--muted-foreground)]")}>
-                尚未驗證。編輯或上傳事件內容後按「驗證事件」，這裡會顯示事件分類、可能觸發的 SOP
-                條號與注入前必須確認的項目。
+                尚未驗證。編輯或上傳事件內容後按「驗證事件」。
               </div>
             )
           )}
@@ -470,8 +497,56 @@ export default function InjectionTab() {
         </div>
       </div>
 
-      {result?.report && <IncidentResponsePanel report={result.report} />}
+      {hasReport && (
+        <div className={cn("flex-1 min-h-0 overflow-y-auto pr-1", !showReport && "hidden")}>
+          <IncidentResponsePanel report={result.report} />
+        </div>
+      )}
     </div>
+  );
+}
+
+/**
+ * 流程列的單一步驟。
+ * current＝目前檢視、done＝已完成（顯示打勾）、locked＝條件未達成不可點。
+ */
+function FlowStep({ index, label, hint, current = false, done = false, locked = false, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={locked}
+      aria-current={current ? "step" : undefined}
+      title={locked ? "注入完成後才會產出建議書" : undefined}
+      className={cn(
+        "flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs transition",
+        "focus-visible:ring-[var(--ring)] focus-visible:ring-[3px] focus-visible:outline-none",
+        "disabled:opacity-50 disabled:pointer-events-none",
+        current
+          ? "border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--foreground)]"
+          : "border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]/50",
+        locked && "border-dashed",
+      )}
+    >
+      {done && !current ? (
+        <CheckCircle2 className="w-3.5 h-3.5 text-[var(--status-success)] shrink-0" />
+      ) : locked ? (
+        <Lock className="w-3.5 h-3.5 shrink-0" />
+      ) : (
+        <span
+          className={cn(
+            "flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
+            current
+              ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+              : "bg-[var(--muted)] text-[var(--muted-foreground)]",
+          )}
+        >
+          {index}
+        </span>
+      )}
+      <span className={cn("font-medium", current && "text-[var(--foreground)]")}>{label}</span>
+      <span className="text-[10px] text-[var(--muted-foreground)]">{hint}</span>
+    </button>
   );
 }
 
@@ -517,7 +592,6 @@ function EventSummaryRow({ summary }) {
               SOP {article}
             </span>
           ))}
-          <span className="text-[10px] text-[var(--muted-foreground)]">（實際由法規判定）</span>
         </div>
       )}
     </div>

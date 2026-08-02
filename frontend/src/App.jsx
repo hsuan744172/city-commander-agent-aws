@@ -64,7 +64,7 @@ export default function App() {
               <Shield className="w-5 h-5 text-[var(--primary-foreground)]" />
             </div>
             {/* 模擬時間不在標題旁重複顯示：時間軸的播放頭讀數（含秒）才是唯一來源 */}
-            <h1 className="text-lg font-bold">城市應變指揮官</h1>
+            <h1 className="text-lg font-bold">道路緊急應變系統</h1>
           </div>
 
           <nav className="flex gap-1" aria-label="主要功能">
@@ -130,12 +130,8 @@ export default function App() {
           />
         </div>
 
-        <div
-          className={cn(
-            "flex-1 min-h-0 overflow-y-auto",
-            activeTab !== "injection" && "hidden",
-          )}
-        >
+        {/* 事件注入自己撐滿剩餘高度，左右兩欄各自捲動，整頁不出現外層捲軸 */}
+        <div className={cn("flex-1 min-h-0", activeTab !== "injection" && "hidden")}>
           <InjectionTab />
         </div>
       </main>
