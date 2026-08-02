@@ -7,9 +7,11 @@ import { cn } from "../lib/utils";
 const FRAME_INFO_MS = 15000;
 
 /**
- * 路段即時街景。兩種用法：
+ * 路段即時影像。兩種用法：
  *   <StreetCam advisory={advisory} />                     事件建議書（取 affected_segment）
  *   <StreetCam segmentId="RD_TPE_002" label="光復南路" />  直接指定路段
+ *
+ * label 傳空字串代表「呼叫端已在別處標示路段名稱」，標題列就不再重複顯示。
  *
  * 影像來源有兩種，依對照表逐支鏡頭而定：
  *   hls  — 臺北市政府 NVR 的 Low-Latency HLS 直播，用 <video> 播放（真即時）
@@ -19,8 +21,9 @@ export default function StreetCam({
   advisory,
   segmentId: segmentIdProp,
   label: labelProp,
-  title = "事故現場街景",
+  title = "事故現場即時影像",
   emptyHint = "尚未選定事故路段",
+  onCameraChange,
 }) {
   const eid = advisory?.event_identification || {};
   const segmentId = segmentIdProp || eid.affected_segment || "";
@@ -140,6 +143,29 @@ export default function StreetCam({
     return () => { cancelled = true; clearInterval(timer); };
   }, [camBase, isHls]);
 
+  // 把當前鏡位回報給呼叫端（監控報告要嵌同一支鏡頭的畫面）。
+  // 報告一律走後端 /snapshot 代理端點：同源、且不論 HLS 或快照模式都取得到單張畫面。
+  const onCameraChangeRef = useRef(onCameraChange);
+  onCameraChangeRef.current = onCameraChange;
+
+  useEffect(() => {
+    if (!onCameraChangeRef.current) return;
+    if (!activeCamera || !segmentId) {
+      onCameraChangeRef.current(null);
+      return;
+    }
+    onCameraChangeRef.current({
+      segment_id: segmentId,
+      camera_id: activeCamera.camera_id,
+      name: activeCamera.name,
+      distance_m: activeCamera.distance_m,
+      snapshot_path: `/api/cameras/${encodeURIComponent(segmentId)}/${encodeURIComponent(activeCamera.camera_id)}/snapshot`,
+      source_page: source,
+      stream_source: streamSource,
+      mode: isHls ? "hls" : "snapshot",
+    });
+  }, [activeCamera, segmentId, source, streamSource, isHls]);
+
   const reconnect = () => {
     setNonce(Date.now());
     setLoadState("loading");
@@ -155,7 +181,8 @@ export default function StreetCam({
     ? live ? `${camBase}/stream?_=${nonce}` : `${camBase}/snapshot?_=${nonce}`
     : null;
 
-  const label = labelProp || eid.location || roadName || segmentId;
+  // 用 ?? 而非 ||：呼叫端明確傳 "" 表示不要在這裡再標一次路段名稱
+  const label = labelProp ?? (eid.location || roadName || segmentId);
   const isStale = !isHls && frameInfo?.available === true && frameInfo.is_stale;
 
   return (
@@ -245,7 +272,7 @@ export default function StreetCam({
                 <div className="text-xs font-medium text-[var(--card)] truncate">{activeCamera.name}</div>
                 <div className="flex items-center gap-1 text-xs text-[var(--card)]/80">
                   <MapPin className="w-2.5 h-2.5 shrink-0" />
-                  距事故點約 {activeCamera.distance_m} 公尺
+                  距路段約 {activeCamera.distance_m} 公尺
                 </div>
               </div>
               {!isHls && frameInfo?.captured_at && (
@@ -297,7 +324,7 @@ export default function StreetCam({
             不講清楚的話，評審會直接質疑影像與判定數據不同源。
           */}
           <p className="text-xs text-[var(--muted-foreground)] leading-relaxed">
-            此影像為該路段目前的實際街景，用於輔助掌握現地環境；
+            此影像為該路段目前的實際路況畫面，用於輔助確認現地環境；
             <span className="font-medium">與模擬時間軸的車流數據無關</span>，
             不參與 SOP 分級判定、替代路徑計算或 ETE 估算。
           </p>

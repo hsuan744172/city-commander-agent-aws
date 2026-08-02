@@ -1,18 +1,20 @@
 import { useState } from "react";
-import { Activity, AlertTriangle, BarChart3, Shield, Siren } from "lucide-react";
+import { AlertTriangle, BarChart3, Shield, Siren } from "lucide-react";
 import { cn } from "./lib/utils";
 import useNetworkStatus from "./lib/useNetworkStatus";
 import DashboardTab from "./components/DashboardTab";
-import IncidentTab from "./components/IncidentTab";
+import SegmentMonitorTab from "./components/SegmentMonitorTab";
 import InjectionTab from "./components/InjectionTab";
 import FloatingAdvisor from "./components/FloatingAdvisor";
 import useStreamClock from "./lib/useStreamClock";
 
 const TABS = [
   { id: "dashboard", label: "即時儀表板", icon: BarChart3 },
-  { id: "incidents", label: "路網即時監控", icon: Activity },
   { id: "injection", label: "事件注入", icon: Siren },
 ];
+
+// 路段即時監控沒有導覽頁籤：唯一入口是從即時儀表板點擊路段穿透進來。
+const SEGMENT_VIEW = "segment";
 
 const INITIAL_CHAT = [
   {
@@ -46,7 +48,12 @@ export default function App() {
   const inspectSegment = (segment) => {
     if (!segment?.segment_id) return;
     setSelectedSegmentId(segment.segment_id);
-    setActiveTab("incidents");
+    setActiveTab(SEGMENT_VIEW);
+  };
+
+  const backToDashboard = () => {
+    setActiveTab("dashboard");
+    setSelectedSegmentId(null);
   };
 
   const alertCount =
@@ -70,12 +77,17 @@ export default function App() {
           <nav className="flex gap-1" aria-label="主要功能">
             {TABS.map((tab) => {
               const Icon = tab.icon;
-              const active = activeTab === tab.id;
+              // 路段監控是儀表板的下鑽檢視，停在該頁時仍讓儀表板保持選取狀態
+              const active =
+                activeTab === tab.id ||
+                (activeTab === SEGMENT_VIEW && tab.id === "dashboard");
               return (
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() =>
+                    tab.id === "dashboard" ? backToDashboard() : setActiveTab(tab.id)
+                  }
                   aria-current={active ? "page" : undefined}
                   className={cn(
                     "flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]",
@@ -116,19 +128,16 @@ export default function App() {
           />
         </div>
 
-        <div
-          className={cn(
-            "flex-1 min-h-0 overflow-y-auto",
-            activeTab !== "incidents" && "hidden",
-          )}
-        >
-          <IncidentTab
-            network={network}
-            selectedSegmentId={selectedSegmentId}
-            onSelectSegment={setSelectedSegmentId}
-            onBackToDashboard={() => setActiveTab("dashboard")}
-          />
-        </div>
+        {/* 只在穿透進來時掛載：離開時卸載，才不會讓報告列印節點留在 DOM 裡 */}
+        {activeTab === SEGMENT_VIEW && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <SegmentMonitorTab
+              network={network}
+              selectedSegmentId={selectedSegmentId}
+              onBackToDashboard={backToDashboard}
+            />
+          </div>
+        )}
 
         {/* 事件注入自己撐滿剩餘高度，左右兩欄各自捲動，整頁不出現外層捲軸 */}
         <div className={cn("flex-1 min-h-0", activeTab !== "injection" && "hidden")}>

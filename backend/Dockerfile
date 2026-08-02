@@ -4,7 +4,10 @@ WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
-RUN npm run build
+# MapLibre 6 經 bundler 必須有獨立 worker；缺檔時 production 會只剩空白底圖。
+# 在映像建置階段直接阻擋不完整的前端產物進入 ECR。
+RUN npm run build \
+    && find dist/assets -maxdepth 1 -type f -name 'maplibre-gl-worker-*.js' -print -quit | grep -q .
 
 # Supply a pinned uv binary to the production image.
 FROM ghcr.io/astral-sh/uv:0.10.0 AS uv

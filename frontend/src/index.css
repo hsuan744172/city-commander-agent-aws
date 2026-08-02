@@ -146,3 +146,263 @@ body {
     animation: none;
   }
 }
+
+/* ========================================================================== 
+ * 路段即時監控報告（匯出 PDF）
+ *
+ * 公部門的存查習慣是 PDF，所以匯出走「瀏覽器列印 → 另存為 PDF」：
+ * 不必額外引入前端截圖套件或後端排版引擎，也不會有 Docker 映像缺中文字型的問題，
+ * 而且趨勢圖是以向量輸出，放大不會糊。
+ *
+ * 報告節點由 SegmentReport 以 portal 掛在 body 底下（#print-root），
+ * 螢幕上永遠隱藏，只有列印時才顯示，因此畫面版面完全不受報告樣式影響。
+ * ========================================================================== */
+
+#print-root {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 16mm 15mm 18mm;
+  }
+
+  /* App 用 h-screen + overflow-hidden 排版，列印必須解開才不會只印出第一頁 */
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #111111 !important;
+  }
+
+  body > *:not(#print-root) {
+    display: none !important;
+  }
+
+  #print-root {
+    display: block !important;
+    /* 級別徽章與表頭底色是判讀依據，不能被瀏覽器的省墨模式吃掉 */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
+.report {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.65;
+  color: #111111;
+  background: #ffffff;
+}
+
+.report-doc-header {
+  text-align: center;
+  border-bottom: 2px solid #111111;
+  padding-bottom: 8px;
+  margin-bottom: 14px;
+}
+
+.report-agency {
+  font-size: 11pt;
+  letter-spacing: 0.18em;
+  margin-bottom: 2px;
+}
+
+.report-doc-title {
+  font-size: 17pt;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin: 2px 0;
+}
+
+.report-doc-subtitle {
+  font-size: 9pt;
+  color: #4a5a55;
+}
+
+.report-meta {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+  font-size: 9.5pt;
+}
+
+.report-meta th,
+.report-meta td {
+  border: 1px solid #9aa8a3;
+  padding: 4px 7px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.report-meta th {
+  background: #eef3f1;
+  font-weight: 600;
+  white-space: nowrap;
+  width: 15%;
+}
+
+.report-section {
+  margin-bottom: 15px;
+}
+
+.report-section > h2 {
+  font-size: 11.5pt;
+  font-weight: 700;
+  border-left: 4px solid #111111;
+  padding-left: 7px;
+  margin-bottom: 7px;
+  break-after: avoid;
+}
+
+.report-section > h3 {
+  font-size: 10.5pt;
+  font-weight: 600;
+  margin: 9px 0 4px;
+  break-after: avoid;
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9.5pt;
+}
+
+.report-table caption {
+  text-align: left;
+  font-size: 9pt;
+  color: #4a5a55;
+  padding-bottom: 3px;
+}
+
+.report-table th,
+.report-table td {
+  border: 1px solid #9aa8a3;
+  padding: 4px 7px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.report-table thead th {
+  background: #eef3f1;
+  font-weight: 600;
+}
+
+.report-table .num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.report-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-size: 9pt;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.report-badge-a {
+  background: #b91c1c;
+}
+
+.report-badge-b {
+  background: #b45309;
+}
+
+.report-badge-normal {
+  background: #3a7d63;
+}
+
+.report-badge-role {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 8.5pt;
+  font-weight: 700;
+  border: 1px solid #9aa8a3;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+
+.report-badge-primary {
+  background: #e3f2ea;
+  border-color: #3a7d63;
+}
+
+.report-badge-secondary {
+  background: #edeaf8;
+  border-color: #6e55b0;
+}
+
+.report-badge-excluded {
+  background: #f1f1f1;
+  color: #5a5a5a;
+}
+
+.report-ai {
+  border: 1px solid #9aa8a3;
+  border-left: 4px solid #6e55b0;
+  padding: 8px 10px;
+  background: #fbfbfe;
+}
+
+.report-ai p {
+  margin: 0 0 5px;
+  white-space: pre-wrap;
+}
+
+.report-ai p:last-child {
+  margin-bottom: 0;
+}
+
+.report-figure {
+  margin: 0;
+  break-inside: avoid;
+}
+
+.report-figure img {
+  width: 100%;
+  max-height: 92mm;
+  object-fit: contain;
+  border: 1px solid #9aa8a3;
+  background: #f4f6f5;
+}
+
+.report-figure figcaption {
+  font-size: 8.5pt;
+  color: #4a5a55;
+  margin-top: 3px;
+}
+
+.report-note {
+  font-size: 8.5pt;
+  color: #4a5a55;
+  margin: 4px 0 0;
+}
+
+.report-clause {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8.5pt;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  border: 1px solid #c9d6d2;
+  background: #f7f9f8;
+  padding: 6px 8px;
+  margin: 0 0 6px;
+  break-inside: avoid;
+}
+
+.report-footer {
+  border-top: 1px solid #9aa8a3;
+  padding-top: 6px;
+  margin-top: 14px;
+  font-size: 8.5pt;
+  color: #4a5a55;
+}
+
+.report-page-break {
+  break-before: page;
+}

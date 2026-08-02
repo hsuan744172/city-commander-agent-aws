@@ -159,4 +159,3 @@ export default function DashboardTab({ network, stream, onInspectSegment }) {
     </div>
   );
 }
-

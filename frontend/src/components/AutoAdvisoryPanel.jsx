@@ -3,39 +3,45 @@ import RouteCandidateTable from "./RouteCandidateTable";
 import { cn } from "../lib/utils";
 
 /**
- * SOP 第 1 條自動應變
+ * SOP 第 1 條判定與自動應變（單一路段）
  *
  * 只有城市應變觸發路段（忠孝東路四段、光復南路）會啟動應變：
  *   B 級 → 長綠燈時制（替代道路綠燈 +25%）＋ 調度警力淨空路口
  *   A 級 → 上述再加上第 2 條替代路徑引導
- * 其餘路段達 A/B 級只做燈號顯示，列在下方「僅監控」，不會誤導成已下應變指令。
+ * 非觸發路段達 A/B 級只列入監控（monitoredAlert），不會誤導成已下應變指令。
+ *
+ * 路段未達 A/B 級時本面板不輸出任何內容：分級狀態已在頁首標示，
+ * 不需要在下方重複「未達門檻」。
+ *
+ * triggerSegmentNames 由呼叫端從後端 is_trigger_segment 推導後傳入，
+ * 前端不自行寫死觸發路段名單（規則常數單一來源在 sop_rules.py）。
  */
-export default function AutoAdvisoryPanel({ advisories, monitoredAlerts, onInspect }) {
+export default function AutoAdvisoryPanel({
+  advisories,
+  monitoredAlert,
+  triggerSegmentNames = [],
+}) {
   const hasAdvisories = advisories.length > 0;
-  const hasMonitored = monitoredAlerts.length > 0;
 
-  if (!hasAdvisories && !hasMonitored) {
-    return (
-      <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg px-5 py-3 flex items-center gap-2">
-        <span className="w-2 h-2 bg-[var(--status-success)] rounded-full" />
-        <span className="text-sm text-[var(--muted-foreground)]">
-          路網運作正常，未達 SOP 預警門檻
-        </span>
-      </div>
-    );
-  }
+  if (!hasAdvisories && !monitoredAlert) return null;
 
   return (
     <div className="bg-[var(--card)] rounded-lg border border-[var(--border)] p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <Siren className="w-4 h-4 text-[var(--status-error)]" />
-        <h2 className="text-sm font-semibold">SOP 第 1 條自動應變</h2>
-        <span className="text-xs text-[var(--muted-foreground)]">
-          僅城市應變觸發路段
-        </span>
+        <Siren
+          className={cn(
+            "w-4 h-4",
+            hasAdvisories
+              ? "text-[var(--status-error)]"
+              : "text-[var(--muted-foreground)]",
+          )}
+        />
+        <h2 className="text-sm font-semibold">
+          {hasAdvisories ? "SOP 第 1 條自動應變" : "SOP 第 1 條判定"}
+        </h2>
       </div>
 
-      {hasAdvisories ? (
+      {hasAdvisories &&
         advisories.map((adv) => (
           <article
             key={adv.segment_id}
@@ -56,15 +62,6 @@ export default function AutoAdvisoryPanel({ advisories, monitoredAlerts, onInspe
                   {adv.sop_reference}
                 </div>
               </div>
-              {onInspect && (
-                <button
-                  type="button"
-                  onClick={() => onInspect({ segment_id: adv.segment_id })}
-                  className="shrink-0 px-2 py-1 rounded-sm text-xs border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] hover:bg-[var(--accent)] transition focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
-                >
-                  詳情
-                </button>
-              )}
             </div>
 
             {/* A 級才有替代路徑引導 */}
@@ -153,39 +150,29 @@ export default function AutoAdvisoryPanel({ advisories, monitoredAlerts, onInspe
               </div>
             )}
           </article>
-        ))
-      ) : (
-        <p className="text-sm text-[var(--muted-foreground)]">
-          城市應變觸發路段目前未達級別，無須啟動長綠燈時制。
-        </p>
-      )}
+        ))}
 
-      {/* 僅監控：非觸發路段 */}
-      {hasMonitored && (
-        <div className="rounded-md border border-[var(--border)] bg-[var(--muted)] px-3 py-2">
-          <div className="flex items-center gap-1.5 mb-1">
-            <Eye className="w-3 h-3 text-[var(--muted-foreground)]" />
-            <span className="text-[10px] font-semibold text-[var(--muted-foreground)]">
-              其他達級別路段（依 SOP 第 1 條僅供燈號顯示，不啟動應變）
+      {/* 本路段達 A/B 級，但不是 SOP 第 1 條指定的城市應變觸發路段 */}
+      {monitoredAlert && (
+        <div className="rounded-md border border-[var(--border)] bg-[var(--muted)] px-3 py-2 flex items-start gap-1.5">
+          <Eye className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[var(--muted-foreground)]" />
+          <p className="text-xs text-[var(--muted-foreground)] leading-relaxed">
+            本路段
+            <span
+              className={cn(
+                "mx-1 font-medium",
+                monitoredAlert.level === "A"
+                  ? "text-[var(--status-error)]"
+                  : "text-[var(--status-warning)]",
+              )}
+            >
+              {monitoredAlert.level_description}
             </span>
-          </div>
-          <div className="flex flex-wrap gap-x-3 gap-y-1">
-            {monitoredAlerts.map((m) => (
-              <span key={m.segment_id} className="text-xs text-[var(--muted-foreground)]">
-                {m.road_name}
-                <span
-                  className={cn(
-                    "ml-1 font-medium",
-                    m.level === "A"
-                      ? "text-[var(--status-error)]"
-                      : "text-[var(--status-warning)]",
-                  )}
-                >
-                  {m.level}
-                </span>
-              </span>
-            ))}
-          </div>
+            （飽和度 {Math.round((monitoredAlert.saturation_score || 0) * 100)}%、時速{" "}
+            {monitoredAlert.avg_speed} 公里），不在 SOP 第 1 條列舉的城市應變觸發路段
+            {triggerSegmentNames.length > 0 && `（${triggerSegmentNames.join("、")}）`}
+            內，因此只做紅黃燈顯示與監控，不啟動長綠燈時制與替代路徑引導。
+          </p>
         </div>
       )}
     </div>

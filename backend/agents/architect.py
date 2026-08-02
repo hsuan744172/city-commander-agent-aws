@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 from backend import sim_clock
-from backend.agents import policy, sop_rules, traffic_math
+from backend.agents import decision_trace, policy, sop_rules, traffic_math
 from backend.agents.comms import run_comms
 from backend.agents.policy import evaluate_data_triggers, run_assessment
 from backend.agents.router import run_routing
@@ -46,6 +46,25 @@ LIVE_INCIDENTS_FILE = DATA_DIR / "live_incidents.json"
 # 1500 leaves headroom while still bounding worst-case latency inside the 60s budget.
 BEDROCK_MAX_TOKENS = int(os.environ.get("BEDROCK_MAX_TOKENS", "1500"))
 BEDROCK_TEMPERATURE = float(os.environ.get("BEDROCK_TEMPERATURE", "0.2"))
+
+# Extended thinking (chain-of-thought) budget, in tokens. 0 disables it.
+#
+# 命題模組 4 要求「在 Dashboard 上清楚展示 AI 的推理過程」。Bedrock 的 Claude
+# extended thinking 會把逐步推理放在 reasoningContent 區塊回傳，這是唯一能取得
+# 模型真實中間思考的途徑（把「請列出你的推理」寫進 prompt 只會得到事後編排的說明）。
+#
+# 開啟時必須同時滿足三個供應商限制，否則整個呼叫會被拒絕：
+#   1. temperature 必須為 1（不接受其他取樣溫度）
+#   2. top_p 不得設定
+#   3. max_tokens 必須大於 budget_tokens
+# 因此下方在啟用 thinking 時會覆寫 temperature，並把 budget 加到 max_tokens 上，
+# 讓「可寫給使用者的輸出長度」維持與未啟用時相同。
+BEDROCK_THINKING_BUDGET = int(os.environ.get("BEDROCK_THINKING_BUDGET", "1024"))
+# Bedrock 目前要求 thinking budget 至少 1024 tokens。
+BEDROCK_THINKING_MIN_BUDGET = 1024
+# 思考文字可能很長，存進 payload 前先截斷，避免建議書 JSON 膨脹。
+THINKING_CHAR_LIMIT = int(os.environ.get("THINKING_CHAR_LIMIT", "4000"))
+TOOL_TRACE_CHAR_LIMIT = 600
 
 # The foundation model admits roughly one request per second, so calls are spaced
 # by a token bucket instead of being serialised behind each other's latency.
@@ -353,6 +372,7 @@ def _process_incident(incident: dict, triggers_for=None, allow_ai: bool = True) 
             "actions": _fallback_actions(info, policy_result, routing_result),
             "title": _advisory_title(info),
             "source": "deadline_fallback",
+            "reasoning": None,
         }
 
     advisory = _assemble_advisory(
@@ -367,6 +387,28 @@ def _process_incident(incident: dict, triggers_for=None, allow_ai: bool = True) 
             "actions": ai["actions"],
             "source": ai["source"],
         }
+
+    # Phase 6: 模組 4 — 決策鏈、SOP 逐項合規檢核與 AI 思考軌跡。
+    # 三者都是既有結果的投影或紀錄，不重算任何數值。
+    advisory["decision_trace"] = decision_trace.build_decision_trace(
+        incident=incident,
+        info=info,
+        policy_result=policy_result,
+        routing_result=routing_result,
+        comms_result=comms_result,
+        cross_actions=cross_actions,
+        narrative_source=ai["source"],
+    )
+    advisory["sop_conformance"] = decision_trace.build_sop_conformance(
+        info=info,
+        policy_result=policy_result,
+        routing_result=routing_result,
+        comms_result=comms_result,
+        cross_actions=cross_actions,
+        timestamp=timestamp,
+    )
+    advisory["ai_reasoning"] = ai.get("reasoning")
+
     advisory["elapsed_ms"] = int((time.monotonic() - started) * 1000)
     return advisory
 
@@ -505,7 +547,9 @@ def _generate_advisory_ai(
     )
 
     try:
-        result = _call_bedrock(prompt, system_prompt, "advisory")
+        # capture_thinking=True：模組 4 要展示「為何判為 A 級、為何排除某條替代道路」
+        # 的推理過程，思考區塊是唯一能取得模型真實中間步驟的來源。
+        result = _call_bedrock(prompt, system_prompt, "advisory", capture_thinking=True)
         if not result.get("ok"):
             raise RuntimeError(f"bedrock unavailable ({result.get('fallback_reason')})")
         narrative, actions = _split_advisory_response(result.get("response", ""))
@@ -516,6 +560,7 @@ def _generate_advisory_ai(
             "actions": actions or fallback_actions,
             "title": title,
             "source": "ai_generated" if actions else "ai_generated_partial",
+            "reasoning": result.get("reasoning"),
         }
     except Exception as exc:
         logger.error(f"AI 建議書生成失敗，改用 SOP 確定性敘述: {exc}")
@@ -524,6 +569,7 @@ def _generate_advisory_ai(
             "actions": fallback_actions,
             "title": title,
             "source": "fallback",
+            "reasoning": None,
         }
 
 
@@ -860,6 +906,7 @@ def generate_alert_summary(
 
     if not level_a and not level_b and not triggered_numbers:
         payload = {
+            "mode": "network",
             "sim_time": sim,
             "has_alert": False,
             "summary": "路網運作正常，未達 SOP 預警門檻，無須啟動應變。",
@@ -951,6 +998,7 @@ def generate_alert_summary(
         source = "fallback"
 
     payload = {
+        "mode": "network",
         "sim_time": sim,
         "has_alert": True,
         "summary": summary,
@@ -997,6 +1045,291 @@ def _remember_alert(signature: str, payload: dict) -> None:
         if len(_ALERT_SUMMARY_CACHE) >= _ALERT_CACHE_MAX:
             _ALERT_SUMMARY_CACHE.clear()
         _ALERT_SUMMARY_CACHE[signature] = payload
+
+
+SEGMENT_SUMMARY_CHAR_LIMIT = 220
+SEGMENT_SUMMARY_HARD_LIMIT = 280
+
+# 路段編號不該出現在對外敘述裡：報告表頭已經標了，寫進句子只會變成技術術語。
+_SEGMENT_CODE_PATTERN = re.compile(r"[（(]?\s*RD[_A-Z0-9]+\s*[)）]?")
+
+
+def _limit_segment_summary(text: str) -> str:
+    """清掉路段編號並限制長度，超長時切在句尾而不是硬截。"""
+    cleaned = _SEGMENT_CODE_PATTERN.sub("", text or "").strip()
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    if len(cleaned) <= SEGMENT_SUMMARY_HARD_LIMIT:
+        return cleaned
+
+    shortened = cleaned[:SEGMENT_SUMMARY_HARD_LIMIT]
+    boundary = max(shortened.rfind(mark) for mark in ("。", "！", "？"))
+    if boundary >= SEGMENT_SUMMARY_CHAR_LIMIT * 0.6:
+        return shortened[: boundary + 1].strip()
+    return shortened.rstrip() + "…"
+
+
+def generate_segment_alert_summary(
+    status: dict,
+    segment_id: str,
+    sim_time: str | None = None,
+) -> dict:
+    """
+    單一路段的預警摘要，供路段即時監控頁與其匯出的監控報告使用。
+
+    與 generate_alert_summary 相同的分工：分級、趨勢、應變內容全部由程式算好
+    （sop_rules / traffic_math / _auto_advisory_for），LLM 只負責寫成一段
+    指揮官口吻的敘述，不參與任何判定或計算。
+
+    非「城市應變觸發路段」達 A/B 級時，prompt 明確禁止建議啟動長綠燈時制或
+    替代路徑引導，對應 SOP 第 1 條的觸發路段限制，避免產出過度觸發的指令。
+    """
+    seg_id = str(segment_id or "").strip()
+    segments = status.get("segments") or []
+    segment = next((s for s in segments if s.get("segment_id") == seg_id), None)
+    sim = sim_time or status.get("sim_time") or status.get("timestamp") or ""
+
+    if segment is None:
+        return {
+            "mode": "segment",
+            "sim_time": sim,
+            "segment_id": seg_id,
+            "available": False,
+            "has_alert": False,
+            "summary": "",
+            "source": "deterministic",
+            "error": f"查無路段 {seg_id} 的車流量測",
+        }
+
+    level = segment.get("level", "Normal")
+    is_trigger = bool(segment.get("is_trigger_segment"))
+    advisory = next(
+        (a for a in (status.get("auto_advisories") or []) if a.get("segment_id") == seg_id),
+        None,
+    )
+    monitored = next(
+        (m for m in (status.get("monitored_alerts") or []) if m.get("segment_id") == seg_id),
+        None,
+    )
+    trend = traffic_math.segment_saturation_trend(seg_id, sim or None)
+
+    saturation_pct = round(float(segment.get("saturation_score") or 0) * 100)
+    clause_numbers = [1]
+    if level == "A" and is_trigger:
+        clause_numbers.append(2)
+    if level in {"A", "B"}:
+        clause_numbers.append(7)  # ETE 計算依據
+    sop_clauses = policy.clauses_payload(clause_numbers)
+
+    network_triggers = list((status.get("data_triggers") or {}).get("triggered_numbers") or [])
+    network_context = {
+        "triggered_sop_numbers": network_triggers,
+        "level_a_count": sum(1 for s in segments if s.get("level") == "A"),
+        "level_b_count": sum(1 for s in segments if s.get("level") == "B"),
+    }
+
+    base_payload = {
+        "mode": "segment",
+        "sim_time": sim,
+        "available": True,
+        "segment_id": seg_id,
+        "road_name": segment.get("road_name", ""),
+        "level": level,
+        "level_description": segment.get("level_description")
+        or sop_rules.level_description(level),
+        "saturation_score": segment.get("saturation_score"),
+        "avg_speed": segment.get("avg_speed"),
+        "vehicle_count": segment.get("vehicle_count"),
+        "lane_status": segment.get("lane_status"),
+        "lane_status_label": segment.get("lane_status_label")
+        or sop_rules.lane_status_label(segment.get("lane_status")),
+        "data_as_of": segment.get("data_as_of"),
+        "is_trigger_segment": is_trigger,
+        "has_alert": level in {"A", "B"},
+        "thresholds": {
+            "level_a": sop_rules.LEVEL_A_THRESHOLD,
+            "level_b": sop_rules.LEVEL_B_THRESHOLD,
+        },
+        "trend": trend,
+        "sop_clauses": sop_clauses,
+        "network_context": network_context,
+    }
+
+    signature = "|".join([
+        "segment",
+        sim,
+        seg_id,
+        level,
+        str(saturation_pct),
+        ",".join(str(n) for n in sorted(network_triggers)),
+    ])
+    with _ALERT_CACHE_LOCK:
+        hit = _ALERT_SUMMARY_CACHE.get(signature)
+    if hit is not None:
+        return hit
+
+    if level not in {"A", "B"}:
+        payload = {
+            **base_payload,
+            "summary": (
+                f"{base_payload['road_name']}目前飽和度 {saturation_pct}%，"
+                f"未達 SOP 第 1 條 B 級門檻，維持常態監控。"
+            ),
+            "source": "deterministic",
+        }
+        _remember_alert(signature, payload)
+        return payload
+
+    facts = [
+        f"現在時間：{sim}",
+        f"路段：{base_payload['road_name']}",
+        f"SOP 第 1 條分級：{base_payload['level_description']}"
+        f"（B 級門檻 85%、A 級門檻 95%）",
+        f"當前飽和度 {saturation_pct}%、平均時速 {segment.get('avg_speed')} 公里、"
+        f"車流量 {segment.get('vehicle_count')} 輛、"
+        f"車道狀態 {sop_rules.lane_status_label(segment.get('lane_status'))}",
+        f"是否為城市應變觸發路段：{'是' if is_trigger else '否'}",
+    ]
+
+    if trend.get("available"):
+        facts.append(
+            f"趨勢：近 {trend['window_minutes']} 分鐘飽和度由 "
+            f"{round(trend['first_saturation_score'] * 100)}% "
+            f"{trend['direction_label']}至 {round(trend['current_saturation_score'] * 100)}%"
+            f"（變化 {trend['delta_percentage_points']} 個百分點），"
+            f"期間峰值 {round(trend['peak_saturation_score'] * 100)}% 出現於 {trend['peak_time']}"
+        )
+        if trend.get("reached_level_a_at"):
+            facts.append(f"首次達 A 級時間：{trend['reached_level_a_at']}")
+        elif trend.get("reached_level_b_at"):
+            facts.append(f"首次達 B 級時間：{trend['reached_level_b_at']}")
+
+    if advisory:
+        facts.append(f"已啟動之應變依據：{advisory.get('sop_reference', '')}")
+        if advisory.get("signal_action"):
+            facts.append(f"號誌配時調整：{advisory['signal_action']}")
+        if advisory.get("window"):
+            facts.append(f"配時時段：{advisory['window']}")
+        if (advisory.get("police_dispatch") or {}).get("instruction"):
+            facts.append(f"警力調度：{advisory['police_dispatch']['instruction']}")
+        if advisory.get("primary_route"):
+            facts.append(
+                f"主疏散路段：{advisory['primary_route']}"
+                f"（飽和度 {round(float(advisory.get('primary_saturation') or 0) * 100)}%）"
+            )
+            if advisory.get("selection_reason"):
+                facts.append(f"主疏散選用理由：{advisory['selection_reason']}")
+            secondary = advisory.get("secondary_routes") or []
+            if secondary:
+                facts.append(
+                    "次要疏散："
+                    + "、".join(
+                        f"{r['name']}（{round(float(r.get('saturation_score') or 0) * 100)}%）"
+                        for r in secondary
+                    )
+                )
+            excluded = advisory.get("excluded_routes") or []
+            if excluded:
+                facts.append(f"已排除候選數：{len(excluded)} 條（報告另附排除理由）")
+        if advisory.get("ete_minutes") is not None:
+            breakdown = advisory.get("ete_breakdown") or {}
+            facts.append(
+                f"預計恢復時間 {advisory['ete_minutes']} 分鐘"
+                f"（基礎清除 {breakdown.get('base_clearance_minutes')} 分鐘 ＋ 壅塞懲罰 "
+                f"{breakdown.get('congestion_penalty_minutes')} 分鐘，依 SOP 第 7 條公式）"
+            )
+    elif monitored:
+        facts.append(
+            "本路段不在 SOP 第 1 條列舉的城市應變觸發路段內，"
+            "依條文僅列入紅黃燈顯示與監控，未啟動長綠燈時制與替代路徑引導"
+        )
+
+    if network_triggers:
+        facts.append(
+            "同時段全網另觸發 SOP 第 "
+            + "、".join(str(n) for n in network_triggers)
+            + " 條（屬人流與信令條款，非本路段車流判定範圍）"
+        )
+
+    scope_rule = (
+        "本路段屬城市應變觸發路段，可依 SOP 第 1 條敘述長綠燈時制與警力淨空路口。"
+        if is_trigger
+        else "本路段不是城市應變觸發路段，嚴禁提及長綠燈時制、替代路徑引導或預計恢復"
+        "時間，只能寫持續監控、預防性疏導與升級門檻。"
+    )
+    ete_rule = (
+        "可引用上列預計恢復時間數值。"
+        if advisory and advisory.get("ete_minutes") is not None
+        else "上列事實沒有預計恢復時間，禁止提及、估算或說明恢復時間如何計算。"
+    )
+
+    prompt = f"""你是台北市交控中心的 AI 值班指揮官。以下是系統對單一路段的程式判定結果，請為監控報告寫一段預警摘要。
+
+【程式判定結果】
+{chr(10).join('- ' + line for line in facts)}
+
+【SOP 條文原文】
+{chr(10).join(c['text'] for c in sop_clauses)[:2500]}
+
+【輸出要求】
+- 分兩段，每段最多三句，合計不得超過 {SEGMENT_SUMMARY_CHAR_LIMIT} 個中文字
+- 第一段寫現況與趨勢判斷，第二段寫建議處置並標明 SOP 條號
+- 不使用清單、標題、Markdown、數學符號或英文欄位名稱
+- 不得輸出路段代號（例如以 RD 開頭的編號）與任何英文原始值
+- 只能引用上列數值，不得自行新增或推算任何數字、時間或人力
+- {ete_rule}
+- {scope_rule}
+"""
+
+    try:
+        result = _call_bedrock(
+            prompt,
+            "你是台北市交控中心值班指揮官，語氣簡潔果斷。只依提供的數值作答，禁止新增數字。",
+            "segment-alert-summary",
+        )
+        if not result.get("ok"):
+            raise RuntimeError(result.get("fallback_reason", "unavailable"))
+        summary = _limit_segment_summary(_sanitize_ai_text(result.get("response", "")))
+        if not summary:
+            raise RuntimeError("empty summary")
+        source = "ai_generated"
+    except Exception as exc:
+        logger.warning(f"路段預警摘要 AI 生成失敗，改用確定性摘要: {exc}")
+        summary = _deterministic_segment_summary(base_payload, advisory, trend)
+        source = "fallback"
+
+    payload = {**base_payload, "summary": summary, "source": source}
+    _remember_alert(signature, payload)
+    return payload
+
+
+def _deterministic_segment_summary(
+    base: dict,
+    advisory: dict | None,
+    trend: dict,
+) -> str:
+    """Bedrock 不可用時的路段摘要。只重述已算好的事實，不做任何推論。"""
+    pct = round(float(base.get("saturation_score") or 0) * 100)
+    parts = [
+        f"{base['road_name']}飽和度 {pct}%、平均時速 {base.get('avg_speed')} 公里，"
+        f"依 SOP 第 1 條判定為{base['level_description']}。"
+    ]
+    if trend.get("available") and trend.get("direction") != "flat":
+        parts.append(
+            f"近 {trend['window_minutes']} 分鐘飽和度{trend['direction_label']} "
+            f"{abs(trend['delta_percentage_points'])} 個百分點。"
+        )
+    if advisory:
+        if advisory.get("signal_action"):
+            parts.append(f"已建議號誌調整：{advisory['signal_action']}。")
+        if advisory.get("primary_route"):
+            parts.append(f"主疏散建議改道 {advisory['primary_route']}。")
+        if advisory.get("ete_minutes") is not None:
+            parts.append(f"依第 7 條估算恢復時間 {advisory['ete_minutes']} 分鐘。")
+    else:
+        parts.append(
+            "本路段非 SOP 第 1 條城市應變觸發路段，僅列入監控，未啟動長綠燈時制。"
+        )
+    return "".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -1121,6 +1454,8 @@ def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) 
         session_id,
         tools=build_tools(current_time),
         messages=history,
+        # What-if 是最需要思維鏈的環節：評審會追問「你怎麼得到這個結論」。
+        capture_thinking=True,
     )
 
     if not result.get("ok"):
@@ -1134,6 +1469,7 @@ def run_what_if(prompt: str, session_id: str = "", sim_time: str | None = None) 
         result["data_as_of"] = traffic_context.get("資料時間")
         result["cited_clauses"] = []
         result["tools_used"] = []
+        result["reasoning"] = _reasoning_from([], thinking_enabled=False)
         result["confidence"] = traffic_math.calculate_answer_confidence(
             prompt=prompt,
             response=result["response"],
@@ -1189,7 +1525,15 @@ def bedrock_settings() -> dict:
         "max_tokens": BEDROCK_MAX_TOKENS,
         "temperature": BEDROCK_TEMPERATURE,
         "min_call_interval": BEDROCK_MIN_CALL_INTERVAL,
+        "thinking_budget": thinking_budget(),
     }
+
+
+def thinking_budget() -> int:
+    """本次部署實際採用的 extended thinking 預算；0 表示停用。"""
+    if BEDROCK_THINKING_BUDGET <= 0:
+        return 0
+    return max(BEDROCK_THINKING_MIN_BUDGET, BEDROCK_THINKING_BUDGET)
 
 
 def probe_bedrock() -> dict:
@@ -1232,10 +1576,18 @@ def _call_bedrock(
     tools: list | None = None,
     messages: list | None = None,
     expose_error: bool = False,
+    capture_thinking: bool = False,
 ) -> dict:
-    """透過 Amazon Bedrock (Strands SDK) 回應。"""
+    """
+    透過 Amazon Bedrock (Strands SDK) 回應。
+
+    capture_thinking=True 時啟用 extended thinking，並把模型的逐步推理與工具往返
+    一併回傳（供模組 4「判定依據展示」呈現）。輕量呼叫（連線探測、預警摘要）不開，
+    以免多花 token 與延遲。
+    """
 
     settings = bedrock_settings()
+    budget = settings["thinking_budget"] if capture_thinking else 0
 
     try:
         from strands import Agent
@@ -1247,12 +1599,22 @@ def _call_bedrock(
         # Latency scales with generated tokens, and the 60-second demo budget is
         # the binding constraint. Low temperature also keeps repeated Demo runs
         # close to reproducible.
-        model = BedrockModel(
-            model_id=settings["model_id"],
-            region_name=settings["region"],
-            max_tokens=settings["max_tokens"],
-            temperature=settings["temperature"],
-        )
+        model_kwargs: dict = {
+            "model_id": settings["model_id"],
+            "region_name": settings["region"],
+            "max_tokens": settings["max_tokens"],
+            "temperature": settings["temperature"],
+        }
+        if budget > 0:
+            # 供應商限制：thinking 啟用時 temperature 必須為 1，且 max_tokens 要
+            # 涵蓋思考預算，否則思考會把可寫給使用者的額度吃光甚至觸發截斷。
+            model_kwargs["temperature"] = 1.0
+            model_kwargs["max_tokens"] = settings["max_tokens"] + budget
+            model_kwargs["additional_request_fields"] = {
+                "thinking": {"type": "enabled", "budget_tokens": budget}
+            }
+
+        model = BedrockModel(**model_kwargs)
         agent_kwargs: dict = {
             "model": model,
             "system_prompt": system_prompt,
@@ -1279,6 +1641,7 @@ def _call_bedrock(
             "messages": all_messages,
             "tools_used": _tool_names_from(current_messages),
             "tool_quality": _tool_quality_from(current_messages),
+            "reasoning": _reasoning_from(current_messages, thinking_enabled=budget > 0),
             "ok": True,
             "timestamp": datetime.now().strftime(sim_clock.TIME_FMT),
         }
@@ -1303,6 +1666,118 @@ def _tool_names_from(messages: list) -> list[str]:
                 if name and name not in names:
                     names.append(name)
     return names
+
+
+def _reasoning_from(messages: list, *, thinking_enabled: bool) -> dict:
+    """
+    把本輪的思考文字與工具往返攤成有序軌跡，供模組 4 在畫面上逐步呈現。
+
+    Bedrock 的訊息結構：
+      - assistant 訊息帶 reasoningContent（extended thinking 的逐步推理）與
+        toolUse（決定呼叫哪個確定性工具、傳什麼參數）
+      - 工具結果由 SDK 以 user 訊息的 toolResult 回填，透過 toolUseId 對回原呼叫
+
+    這裡照訊息順序走一遍，因此輸出的 steps 就是模型真實的決策順序：
+    先想什麼 → 查了哪個工具 → 拿到什麼數值 → 再想什麼 → 給出結論。
+    """
+    steps: list[dict] = []
+    thinking_parts: list[str] = []
+    tool_names: dict[str, str] = {}   # toolUseId -> 工具名稱
+    order = 0
+
+    for message in messages:
+        for block in (message or {}).get("content") or []:
+            if not isinstance(block, dict):
+                continue
+
+            if "reasoningContent" in block:
+                text = _thinking_text(block["reasoningContent"])
+                if not text:
+                    continue
+                thinking_parts.append(text)
+                order += 1
+                steps.append({
+                    "order": order,
+                    "kind": "thinking",
+                    "label": "模型思考",
+                    "text": text,
+                })
+
+            elif "toolUse" in block:
+                use = block["toolUse"] or {}
+                name = use.get("name", "")
+                tool_id = use.get("toolUseId", "")
+                if tool_id:
+                    tool_names[tool_id] = name
+                order += 1
+                steps.append({
+                    "order": order,
+                    "kind": "tool_use",
+                    "label": "呼叫確定性工具",
+                    "tool": name,
+                    "input": use.get("input") or {},
+                })
+
+            elif "toolResult" in block:
+                result = block["toolResult"] or {}
+                tool_id = result.get("toolUseId", "")
+                order += 1
+                steps.append({
+                    "order": order,
+                    "kind": "tool_result",
+                    "label": "工具回傳結果",
+                    "tool": tool_names.get(tool_id, ""),
+                    "status": result.get("status", "success"),
+                    "summary": _tool_result_summary(result),
+                })
+
+    thinking_text = "\n\n".join(thinking_parts)[:THINKING_CHAR_LIMIT]
+    return {
+        "thinking_enabled": thinking_enabled,
+        "thinking_available": bool(thinking_parts),
+        "thinking_text": thinking_text,
+        "steps": steps,
+        "tool_call_count": len([s for s in steps if s["kind"] == "tool_use"]),
+        "thinking_block_count": len(thinking_parts),
+        # 未啟用或供應商未回傳思考區塊時，畫面要說明原因而不是留空白
+        "note": (
+            ""
+            if thinking_parts
+            else (
+                "本輪模型未回傳思考區塊（可能因問題單純而直接作答）"
+                if thinking_enabled
+                else "本次部署未啟用 extended thinking，僅記錄工具呼叫軌跡"
+            )
+        ),
+    }
+
+
+def _thinking_text(reasoning_content: object) -> str:
+    """從 reasoningContent 區塊取出思考文字；加密或遮蔽的內容一律略過。"""
+    if not isinstance(reasoning_content, dict):
+        return ""
+    reasoning_text = reasoning_content.get("reasoningText")
+    if isinstance(reasoning_text, dict):
+        return str(reasoning_text.get("text") or "").strip()
+    if isinstance(reasoning_text, str):
+        return reasoning_text.strip()
+    return ""
+
+
+def _tool_result_summary(result: dict) -> str:
+    """把工具回傳內容壓成一段可讀摘要，過長則截斷。"""
+    chunks: list[str] = []
+    for block in result.get("content") or []:
+        if not isinstance(block, dict):
+            continue
+        if "text" in block:
+            chunks.append(str(block["text"]))
+        elif "json" in block:
+            chunks.append(json.dumps(block["json"], ensure_ascii=False, default=str))
+    text = " ".join(chunk.strip() for chunk in chunks if chunk).strip()
+    if len(text) > TOOL_TRACE_CHAR_LIMIT:
+        return text[:TOOL_TRACE_CHAR_LIMIT] + "…（已截斷）"
+    return text
 
 
 def _tool_quality_from(messages: list) -> dict:
@@ -1340,6 +1815,7 @@ def _bedrock_failure(
         "ok": False,
         "fallback_reason": reason,
         "tools_used": [],
+        "reasoning": _reasoning_from([], thinking_enabled=False),
         "timestamp": datetime.now().strftime(sim_clock.TIME_FMT),
     }
     if exception is not None:

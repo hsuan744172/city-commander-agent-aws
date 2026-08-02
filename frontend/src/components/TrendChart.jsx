@@ -1,16 +1,31 @@
-import { useEffect, useState } from "react";
-import { TrendingUp, X } from "lucide-react";
+import { TrendingUp } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, ReferenceLine,
+  Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 
-// 線條顏色依威脅等級：A 紅、B 橘、其餘藍
+// 線條顏色依 SOP 第 1 條分級：A 紅、B 橘、正常藍
 function lineColor(level) {
   if (level === "A") return "#EF4444";
   if (level === "B") return "#F59E0B";
   return "#3B82F6";
 }
+
+// 列印時 SVG 拿不到頁面的 CSS 變數，格線與座標軸必須給實色，
+// 否則匯出的 PDF 只會剩下一條線、沒有座標軸與門檻線。
+const PRINT_PALETTE = {
+  grid: "#C9D6D2",
+  axis: "#4A5A55",
+  levelA: "#B91C1C",
+  levelB: "#B45309",
+};
+
+const SCREEN_PALETTE = {
+  grid: "var(--border)",
+  axis: "var(--muted-foreground)",
+  levelA: "var(--status-error)",
+  levelB: "var(--status-warning)",
+};
 
 function CustomTooltip({ active, payload, label, levelA = 0.95, levelB = 0.85 }) {
   if (!active || !payload?.length) return null;
@@ -40,35 +55,97 @@ function CustomTooltip({ active, payload, label, levelA = 0.95, levelB = 0.85 })
 }
 
 /**
- * 飽和度趨勢圖（單選一條路段）
- * selectedSegment：由儀表板點擊路段或事件小卡帶入的路段
- * onClear：有提供時顯示取消選取按鈕
+ * 飽和度趨勢圖（單一路段）
+ *
+ * data 由呼叫端傳入（useTrendSeries），螢幕與匯出報告共用同一份資料。
+ * 路段名稱由監控頁頁首統一標示，這裡不重複掛標籤，也不需要圖例（只有一條線）。
+ *
+ * variant="print" 時改用固定尺寸與實色配色，並關閉動畫：
+ * 報告節點在螢幕上是隱藏的，ResponsiveContainer 量到的寬度會是 0，
+ * 進場動畫也不會播完，兩者都會讓列印出來的圖是空白。
  */
-export default function TrendChart({ selectedSegment, onClear, simTime, thresholds }) {
-  const [allData, setAllData] = useState([]);
-  const chartHeight = 280;
+export default function TrendChart({
+  selectedSegment,
+  data = [],
+  loading = false,
+  thresholds,
+  variant = "screen",
+}) {
+  const isPrint = variant === "print";
+  const palette = isPrint ? PRINT_PALETTE : SCREEN_PALETTE;
+  const chartHeight = isPrint ? 240 : 280;
   // 門檻由後端 /api/status 提供，前端不再自己寫死 0.95 / 0.85
   const levelA = thresholds?.level_a ?? 0.95;
   const levelB = thresholds?.level_b ?? 0.85;
 
-  // 後端只回傳「截至當下模擬時間」的資料，因此時間一推進就要重抓
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/trend")
-      .then((r) => r.json())
-      .then((d) => {
-        if (!cancelled) setAllData(d.data || []);
-      })
-      .catch(() => {
-        if (!cancelled) setAllData([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [simTime]);
-
   const hasSelection = Boolean(selectedSegment?.segment_id);
   const color = lineColor(selectedSegment?.level);
+
+  const chart = (
+    <LineChart
+      data={data}
+      width={isPrint ? 660 : undefined}
+      height={isPrint ? chartHeight : undefined}
+      margin={{ top: 8, right: 20, left: 0, bottom: 5 }}
+    >
+      <CartesianGrid strokeDasharray="3 3" stroke={palette.grid} />
+      <XAxis
+        dataKey="time"
+        stroke={palette.axis}
+        fontSize={11}
+        tickFormatter={(value) => String(value).slice(-5)}
+      />
+      <YAxis
+        stroke={palette.axis}
+        fontSize={11}
+        domain={[0, 1.05]}
+        tickFormatter={(v) => `${Math.round(v * 100)}%`}
+      />
+      <ReferenceLine
+        y={levelA}
+        stroke={palette.levelA}
+        strokeDasharray="4 4"
+        strokeOpacity={isPrint ? 0.8 : 0.5}
+        label={{
+          value: `A 級 ${Math.round(levelA * 100)}%`,
+          position: "insideTopRight",
+          fontSize: 10,
+          fill: palette.levelA,
+        }}
+      />
+      <ReferenceLine
+        y={levelB}
+        stroke={palette.levelB}
+        strokeDasharray="4 4"
+        strokeOpacity={isPrint ? 0.8 : 0.5}
+        label={{
+          value: `B 級 ${Math.round(levelB * 100)}%`,
+          position: "insideTopRight",
+          fontSize: 10,
+          fill: palette.levelB,
+        }}
+      />
+      {!isPrint && <Tooltip content={<CustomTooltip levelA={levelA} levelB={levelB} />} />}
+      <Line
+        type="monotone"
+        dataKey={selectedSegment?.segment_id}
+        name={selectedSegment?.road_name}
+        stroke={color}
+        strokeWidth={2}
+        dot={isPrint ? { r: 2 } : false}
+        activeDot={isPrint ? false : { r: 4, strokeWidth: 2 }}
+        isAnimationActive={!isPrint}
+        connectNulls
+      />
+    </LineChart>
+  );
+
+  if (isPrint) {
+    if (!hasSelection || data.length === 0) {
+      return <p className="report-note">趨勢資料不足，無法繪製曲線。</p>;
+    }
+    return chart;
+  }
 
   return (
     <div className="bg-[var(--card)] rounded-lg border border-[var(--border)] p-5">
@@ -77,76 +154,26 @@ export default function TrendChart({ selectedSegment, onClear, simTime, threshol
           <TrendingUp className="w-5 h-5 text-[var(--primary)]" />
           <h2 className="text-sm font-semibold">飽和度趨勢圖</h2>
         </div>
-        {hasSelection ? (
-          <span className="flex items-center gap-1 px-2.5 py-1 bg-[var(--secondary)] border border-[var(--border)] rounded-full text-xs">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-            {selectedSegment.road_name}
-            {onClear && (
-              <button
-                onClick={() => onClear()}
-                title="取消選取"
-                className="ml-0.5 hover:text-[var(--status-error)] transition focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            )}
-          </span>
-        ) : (
-          <span className="text-xs text-[var(--muted-foreground)]">尚未選定路段</span>
-        )}
+        <span className="text-xs text-[var(--muted-foreground)]">
+          虛線為 SOP 第 1 條分級門檻
+        </span>
       </div>
 
-      {/* Chart or Empty State */}
       {!hasSelection ? (
         <div className="h-64 flex flex-col items-center justify-center text-[var(--muted-foreground)] border-2 border-dashed border-[var(--border)] rounded-lg">
           <TrendingUp className="w-10 h-10 mb-2 opacity-30" />
-          <span className="text-sm">於儀表板點擊路段或事件小卡，即可顯示該路段飽和度趨勢</span>
+          <span className="text-sm">等待路網資料</span>
         </div>
-      ) : allData.length === 0 ? (
+      ) : loading || data.length === 0 ? (
         <div
           className="flex items-center justify-center text-[var(--muted-foreground)] text-sm"
           style={{ height: chartHeight }}
         >
-          載入中...
+          {loading ? "載入中..." : "此時間點尚無趨勢資料"}
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={chartHeight}>
-          <LineChart data={allData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis
-              dataKey="time"
-              stroke="var(--muted-foreground)"
-              fontSize={11}
-              tickFormatter={(value) => String(value).slice(-5)}
-            />
-            <YAxis stroke="var(--muted-foreground)" fontSize={11} domain={[0, 1.05]} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
-            <ReferenceLine
-              y={levelA}
-              stroke="var(--status-error)"
-              strokeDasharray="4 4"
-              strokeOpacity={0.5}
-              label={{ value: "A 級", position: "insideTopRight", fontSize: 10, fill: "var(--status-error)" }}
-            />
-            <ReferenceLine
-              y={levelB}
-              stroke="var(--status-warning)"
-              strokeDasharray="4 4"
-              strokeOpacity={0.5}
-              label={{ value: "B 級", position: "insideTopRight", fontSize: 10, fill: "var(--status-warning)" }}
-            />
-            <Tooltip content={<CustomTooltip levelA={levelA} levelB={levelB} />} />
-            <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12 }} iconType="circle" iconSize={8} />
-            <Line
-              type="monotone"
-              dataKey={selectedSegment.segment_id}
-              name={selectedSegment.road_name}
-              stroke={color}
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 4, strokeWidth: 2 }}
-              connectNulls
-            />
-          </LineChart>
+          {chart}
         </ResponsiveContainer>
       )}
     </div>

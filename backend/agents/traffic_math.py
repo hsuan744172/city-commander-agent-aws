@@ -208,6 +208,114 @@ def get_current_traffic_context(timestamp: str | None = None) -> dict:
     }
 
 
+# 趨勢方向的判定帶寬：飽和度變化在 ±1 個百分點內視為持平。
+# 這不是 SOP 門檻（SOP 只規範分級門檻），純粹為了避免把量測雜訊講成「惡化中」。
+TREND_FLAT_BAND = 0.01
+
+
+def segment_saturation_trend(
+    segment_id: str,
+    timestamp: str | None = None,
+    points: int = 6,
+) -> dict:
+    """
+    單一路段的飽和度時序趨勢，供模組 1 的主動預警摘要與監控報告使用。
+
+    只取「<= 查詢時間」的實際量測點，尾端再補上查詢時間當下的切片值，
+    與 GET /api/status 顯示的飽和度同源，因此報告敘述與畫面數字不會對不上。
+
+    回傳值全部是程式運算結果，LLM 只負責轉述，不得自行推算趨勢。
+    """
+    seg = str(segment_id or "").strip()
+    ts = sim_clock.resolve(timestamp)
+    now_stamp = ts.strftime(sim_clock.TIME_FMT)
+
+    df = _load_traffic_flow()
+    seg_df = df[df["Segment_ID"] == seg].sort_values("Timestamp")
+    if seg_df.empty:
+        return {
+            "segment_id": seg,
+            "road_name": "",
+            "sim_time": now_stamp,
+            "available": False,
+            "points": [],
+            "note": "查無該路段車流量測，不提供趨勢判讀",
+        }
+
+    past = seg_df[seg_df["Timestamp"] <= ts]
+    if past.empty:
+        past = seg_df.head(1)
+    history = past.tail(max(1, int(points)))
+
+    def describe(score: float, stamp: str, current: bool = False) -> dict:
+        rounded = round(float(score), 4)
+        return {
+            "time": stamp,
+            "saturation_score": rounded,
+            "level": sop_rules.assess_congestion_level(rounded),
+            "is_current": current,
+        }
+
+    series = [
+        describe(row["Saturation_Score"], pd.Timestamp(row["Timestamp"]).strftime(sim_clock.TIME_FMT))
+        for _, row in history.iterrows()
+    ]
+
+    # 尾端對齊「查詢時間當下」的切片（含 SIM_DATA_MODE 的插值語意）
+    current_slice, _ = _get_time_slice(df, timestamp, key_col="Segment_ID")
+    current_row = current_slice[current_slice["Segment_ID"] == seg]
+    if not current_row.empty:
+        current = describe(current_row.iloc[0]["Saturation_Score"], now_stamp, current=True)
+        if series and series[-1]["time"] == now_stamp:
+            series[-1] = current
+        else:
+            series.append(current)
+
+    first_score = series[0]["saturation_score"]
+    current_score = series[-1]["saturation_score"]
+    delta = round(current_score - first_score, 4)
+
+    if delta >= TREND_FLAT_BAND:
+        direction, direction_label = "rising", "上升"
+    elif delta <= -TREND_FLAT_BAND:
+        direction, direction_label = "falling", "回落"
+    else:
+        direction, direction_label = "flat", "持平"
+
+    peak = max(series, key=lambda p: p["saturation_score"])
+    window_start = pd.Timestamp(series[0]["time"])
+    window_end = pd.Timestamp(series[-1]["time"])
+
+    def first_reaching(level: str) -> str | None:
+        wanted = {"A"} if level == "A" else {"A", "B"}
+        for point in series:
+            if point["level"] in wanted:
+                return point["time"]
+        return None
+
+    return {
+        "segment_id": seg,
+        "road_name": str(seg_df.iloc[0]["Road_Name"]),
+        "sim_time": now_stamp,
+        "available": True,
+        "points": series,
+        "measurement_count": len(series),
+        "window_start": series[0]["time"],
+        "window_end": series[-1]["time"],
+        "window_minutes": int((window_end - window_start).total_seconds() // 60),
+        "first_saturation_score": first_score,
+        "current_saturation_score": current_score,
+        "delta": delta,
+        "delta_percentage_points": round(delta * 100, 1),
+        "direction": direction,
+        "direction_label": direction_label,
+        "peak_saturation_score": peak["saturation_score"],
+        "peak_time": peak["time"],
+        "reached_level_b_at": first_reaching("B"),
+        "reached_level_a_at": first_reaching("A"),
+    }
+
+
 def get_current_crowd_context(timestamp: str | None = None) -> dict:
     """回傳可直接提供給 Agent 的人流與漫遊資料（SOP 第 3、4、6 條判定依據）。"""
     roaming = scan_roaming(timestamp)

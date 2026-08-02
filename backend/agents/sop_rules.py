@@ -108,6 +108,25 @@ def level_description(level: str) -> str:
     return {"A": "A 級癱瘓", "B": "B 級壅擠"}.get(level, "正常")
 
 
+# city_traffic_flow.csv 的 Lane_Status 是英文列舉值。對外顯示與 AI 敘述一律用中文，
+# 避免英文原始值直接出現在報告與民眾訊息裡（對應全局約束 7）。
+LANE_STATUS_LABELS = {
+    "Normal": "正常通行",
+    "Congested": "車流壅塞",
+    "Critical": "嚴重壅塞",
+    "Gridlock": "完全停滯",
+    "Blocked": "阻斷不通",
+    "Partial_Open": "部分開放",
+    "Accident_Impact": "事故影響",
+}
+
+
+def lane_status_label(lane_status: str) -> str:
+    """車道狀態的中文顯示字串。未收錄的值原樣回傳，不臆測語意。"""
+    raw = str(lane_status or "").strip()
+    return LANE_STATUS_LABELS.get(raw, raw)
+
+
 def is_trigger_segment(segment_id: str) -> bool:
     """是否為 SOP 第 1 條的城市應變觸發路段。"""
     return (segment_id or "") in SOP1_TRIGGER_SEGMENTS

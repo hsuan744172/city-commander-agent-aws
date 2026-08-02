@@ -78,7 +78,7 @@ from fastapi import (  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
-from pydantic import BaseModel, ValidationError  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 
 from backend import camera_stream, sim_clock  # noqa: E402
 from backend.agents import policy, sop_rules, traffic_math  # noqa: E402
@@ -110,10 +110,6 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
 APP_VERSION = "3.0.0"
-# 評審可能會加事件測試，原本的 3 件硬上限會直接擋掉。事件之間本來就併發處理，
-# 提高上限只影響單次批次的耗時，不影響 60 秒預算下的單事件延遲。
-MAX_UPLOAD_INCIDENTS = int(os.environ.get("MAX_UPLOAD_INCIDENTS", "10"))
-MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", "1048576"))
 COMMANDER_BUDGET_SECONDS = float(os.environ.get("COMMANDER_BUDGET_SECONDS", "60"))
 COMMANDER_AI_TIMEOUT_SECONDS = min(
     float(os.environ.get("COMMANDER_AI_TIMEOUT_SECONDS", "55")),
@@ -173,28 +169,6 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Request Models
 # ---------------------------------------------------------------------------
-
-
-class Incident(BaseModel):
-    event_id: str
-    type: str = ""
-    location: str = ""
-    affected_segment: str = ""
-    # 人流事件（BS_）用這個欄位指出連帶受影響的車流路段，
-    # live_incidents.json 的人群推擠事件就帶了 affected_road: RD_TPE_001。
-    # 少了這個欄位，交通分級與 ETE 會找不到對應路段（命題所稱的人流↔車流融合）。
-    affected_road: str = ""
-    status: str = ""
-    severity: str = ""
-    description: str = ""
-    timestamp: str = ""
-
-
-class IncidentsRequest(BaseModel):
-    incidents: list[Incident]
-    session_id: str = ""
-    # 本次分析要套用的模擬時間；留空 = 使用當下模擬時鐘
-    sim_time: str = ""
 
 
 class IncidentPreviewRequest(BaseModel):
@@ -378,6 +352,7 @@ def _build_status(ts: str | None = None) -> dict:
                 "avg_speed": round(float(row["Avg_Speed"]), 1),
                 "vehicle_count": int(round(float(row["Vehicle_Count"]))),
                 "lane_status": row["Lane_Status"],
+                "lane_status_label": sop_rules.lane_status_label(row["Lane_Status"]),
                 "level": level,
                 "level_description": sop_rules.level_description(level),
                 "is_trigger_segment": sop_rules.is_trigger_segment(row["Segment_ID"]),
@@ -581,18 +556,32 @@ async def sop_clauses(section: str | None = Query(None, description="條號或�
 @app.get("/api/alert-summary")
 async def alert_summary(
     ts: str | None = Query(None, description="單次時間覆寫，格式 YYYY-MM-DD HH:MM"),
+    segment_id: str | None = Query(
+        None,
+        description="給定時只摘要該路段（路段監控報告用）；省略則摘要全路網（儀表板彈窗用）",
+    ),
 ):
     """
-    儀表板自動彈窗用的預警摘要。
+    預警摘要。兩種範圍，由 segment_id 決定：
 
-    命題要求「門檻判定由程式運算、摘要由 LLM 生成」：門檻與 SOP 觸發在
-    _build_status / policy 算完後才交給 LLM 寫成摘要，LLM 不參與判定。
-    結果依「時間 + 異常特徵」快取，時間沒推進不會重複呼叫 Bedrock。
+      省略 segment_id → 全路網摘要，供儀表板自動彈窗（模組 1 的趨勢異常自動彈窗）
+      給定 segment_id → 單一路段摘要，供路段即時監控頁與其匯出的監控報告
+
+    命題要求「門檻判定由程式運算、摘要由 LLM 生成」：門檻、分級、趨勢與應變內容
+    都在 _build_status / sop_rules / traffic_math 算完後才交給 LLM 寫成敘述，
+    LLM 不參與判定。結果依「時間 + 異常特徵」快取，時間沒推進不會重複呼叫 Bedrock。
     """
-    from backend.agents.architect import generate_alert_summary
+    from backend.agents.architect import (
+        generate_alert_summary,
+        generate_segment_alert_summary,
+    )
 
     def build() -> dict:
         status = _build_status(ts)
+        if segment_id:
+            return generate_segment_alert_summary(
+                status, segment_id, status.get("sim_time")
+            )
         return generate_alert_summary(
             status, status.get("data_triggers"), status.get("sim_time")
         )
@@ -1064,107 +1053,6 @@ async def _run_commander_with_budget(
     report["budget_seconds"] = COMMANDER_BUDGET_SECONDS
     report["within_budget"] = elapsed <= COMMANDER_BUDGET_SECONDS
     return report
-
-
-@app.post("/api/incidents", deprecated=True)
-async def handle_incidents(
-    request: IncidentsRequest,
-    x_admin_token: str | None = Header(None, alias="X-Admin-Token"),
-):
-    """向後相容事件入口；正式操作應使用 preview → inject 流程。"""
-    denied = _admin_denied(x_admin_token)
-    if denied:
-        return denied
-
-    incidents_data = [inc.model_dump() for inc in request.incidents]
-    session_id = request.session_id or f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-
-    report = await _run_commander_with_budget(
-        incidents_data,
-        session_id,
-        request.sim_time or None,
-    )
-
-    return JSONResponse(content=report)
-
-
-@app.post("/api/incidents/upload", deprecated=True)
-async def upload_incidents(
-    file: UploadFile,
-    ts: str | None = Query(None, description="本次分析套用的模擬時間"),
-    x_admin_token: str | None = Header(None, alias="X-Admin-Token"),
-):
-    """向後相容上傳入口；正式操作應使用 preview/upload → inject 流程。"""
-    denied = _admin_denied(x_admin_token)
-    if denied:
-        return denied
-
-    try:
-        content = await file.read()
-        if not content:
-            return JSONResponse(status_code=400, content={"error": "上傳檔案不可為空"})
-        if len(content) > MAX_UPLOAD_BYTES:
-            return JSONResponse(
-                status_code=400,
-                content={"error": f"檔案超過大小限制（{MAX_UPLOAD_BYTES} bytes）"},
-            )
-
-        try:
-            data = json.loads(content.decode("utf-8"))
-        except UnicodeDecodeError:
-            return JSONResponse(status_code=400, content={"error": "檔案必須是 UTF-8 編碼的 JSON"})
-        except json.JSONDecodeError as exc:
-            return JSONResponse(
-                status_code=400,
-                content={"error": f"JSON 解析失敗：第 {exc.lineno} 行第 {exc.colno} 欄格式錯誤"},
-            )
-
-        # 支援兩種格式：直接陣列 [...] 或 {"incidents": [...]}。
-        if isinstance(data, list):
-            raw_incidents = data
-        elif isinstance(data, dict) and "incidents" in data:
-            raw_incidents = data["incidents"]
-        else:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "JSON 格式不正確，需為事件陣列或含 incidents 陣列的物件"},
-            )
-
-        if not isinstance(raw_incidents, list) or not raw_incidents:
-            return JSONResponse(status_code=400, content={"error": "incidents 必須是至少包含一筆事件的陣列"})
-        if len(raw_incidents) > MAX_UPLOAD_INCIDENTS:
-            return JSONResponse(
-                status_code=400,
-                content={"error": f"單次最多可上傳 {MAX_UPLOAD_INCIDENTS} 件事件，請拆分檔案後重試"},
-            )
-
-        incidents = []
-        for index, item in enumerate(raw_incidents, start=1):
-            try:
-                incidents.append(Incident.model_validate(item).model_dump())
-            except ValidationError as exc:
-                logger.info("上傳事件驗證失敗：第 %s 筆", index)
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "error": f"第 {index} 筆事件格式不正確，需至少提供 event_id",
-                        "details": exc.errors(include_url=False),
-                    },
-                )
-
-        session_id = f"upload_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        logger.info("開始處理上傳事件：檔案=%s，事件數=%s", file.filename, len(incidents))
-        report = await _run_commander_with_budget(incidents, session_id, ts)
-        logger.info(
-            "上傳事件處理完成：session=%s，processed=%s，failed=%s",
-            session_id,
-            report.get("processed", 0),
-            report.get("failed", 0),
-        )
-        return JSONResponse(content=report)
-    except Exception:
-        logger.exception("上傳事件處理失敗：檔案=%s", file.filename)
-        return JSONResponse(status_code=500, content={"error": "事件處理失敗，請稍後重試"})
 
 
 # --- 管理員事件注入介面 -----------------------------------------------------

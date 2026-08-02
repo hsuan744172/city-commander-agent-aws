@@ -13,18 +13,8 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "../lib/utils";
-
-const TOOL_LABELS = {
-  lookup_sop_clause: "查詢 SOP 條文",
-  traffic_status: "查詢路網車流",
-  crowd_status: "查詢人流與漫遊",
-  sop_trigger_status: "查詢 SOP 觸發狀態",
-  evacuation_route: "計算疏散路徑",
-  recovery_time: "計算 ETE",
-  signal_plan: "查詢號誌與警力處置",
-  station_detail: "查詢基地台明細",
-  network_geometry: "查詢路網幾何",
-};
+import { TOOL_LABELS } from "../lib/aiLabels";
+import AiReasoningTrace from "./AiReasoningTrace";
 
 const SUGGESTIONS = [
   "若 BL17 人數增至 40,000 人，應啟動哪些條款？",
@@ -90,6 +80,7 @@ export default function AdvisorChat({
           citedClauses: data.cited_clauses || [],
           toolsUsed: data.tools_used || [],
           confidence: data.confidence || null,
+          reasoning: data.reasoning || null,
         },
       ]);
     } catch (e) {
@@ -219,6 +210,13 @@ export default function AdvisorChat({
                 </details>
               )}
               <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+
+              {/* AI 思考過程：模型的逐步推理與工具往返（模組 4 的思維鏈記錄） */}
+              {msg.reasoning && (
+                <div className="mt-2 border-t border-[var(--border)] pt-2">
+                  <AiReasoningTrace reasoning={msg.reasoning} compact />
+                </div>
+              )}
 
               {/* 實際呼叫的確定性計算工具 */}
               {msg.toolsUsed?.length > 0 && (

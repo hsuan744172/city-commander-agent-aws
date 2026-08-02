@@ -14,7 +14,6 @@ ALB_NAME="${ALB_NAME:-city-commander-alb}"
 TARGET_GROUP_NAME="${TARGET_GROUP_NAME:-city-commander-tg}"
 TASK_FAMILY="${TASK_FAMILY:-city-commander-agent}"
 LOG_GROUP_NAME="${LOG_GROUP_NAME:-/ecs/city-commander-agent}"
-MAX_UPLOAD_INCIDENTS="${MAX_UPLOAD_INCIDENTS:-10}"
 S3_DATA_PREFIX="${S3_DATA_PREFIX:-data}"
 BEDROCK_MAX_TOKENS="${BEDROCK_MAX_TOKENS:-1500}"
 
@@ -55,8 +54,9 @@ aws s3api put-public-access-block --bucket "$S3_DATA_BUCKET" --region "$AWS_REGI
 aws s3api put-bucket-encryption --bucket "$S3_DATA_BUCKET" --region "$AWS_REGION" \
   --server-side-encryption-configuration \
   '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-# Only the four reference datasets belong on S3. Incident events are supplied by
-# the operator through the upload endpoint, so live_incidents.json is excluded.
+# 參考資料集放 S3，容器啟動時優先由 S3 讀取。
+# live_incidents.json 是注入用的事件範本，走 preview → inject 流程由映像內的
+# 本地副本提供，不需要也不應該放到共用的 S3 資料前綴。
 aws s3 sync "$PROJECT_ROOT/data/" "${S3_DATA_URI}/" --region "$AWS_REGION" \
   --exclude "live_incidents.json"
 
@@ -240,7 +240,6 @@ cat >"$TEMP_DIR/task-definition.json" <<JSON
       {"name": "SIM_CLOCK_MODE", "value": "playback"},
       {"name": "SIM_CLOCK_INTERVAL", "value": "$SIM_CLOCK_INTERVAL"},
       {"name": "SIM_CLOCK_LOOP", "value": "$SIM_CLOCK_LOOP"},
-      {"name": "MAX_UPLOAD_INCIDENTS", "value": "$MAX_UPLOAD_INCIDENTS"},
       {"name": "PORT", "value": "8080"}
     ],
     "logConfiguration": {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Map as MaplibreMap, NavigationControl, Popup } from "maplibre-gl";
+import { Map as MaplibreMap, NavigationControl, Popup, setWorkerUrl } from "maplibre-gl";
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   MAP_LINE_STYLE,
@@ -10,6 +11,11 @@ import {
   hitAreaWidth,
 } from "../lib/mapLineStyle";
 import { applyBasemapTone } from "../lib/basemapTone";
+
+// MapLibre 6 的預設 worker URL 依賴 import.meta.url；經 Vite bundle 後會誤指向
+// /assets/maplibre-gl-worker.mjs，正式映像並沒有該檔案。明確交給 Vite 打包 worker，
+// 產出帶 content hash 的同源資產，避免 ECS 上向量圖磚與 3D 建築靜默停止渲染。
+setWorkerUrl(maplibreWorkerUrl);
 
 // ============================================================
 // 信義計畫區路段座標 (lng, lat) — 來源：OpenStreetMap Overpass API
@@ -323,9 +329,27 @@ export default function CityMap3D({
       return;
     }
 
+    let didLoad = false;
+    const handleMapError = (event) => {
+      const message = String(event?.error?.message || event?.error || "未知錯誤");
+      console.error("[CityMap3D] MapLibre error:", message, event?.error || event);
+
+      // MapLibre 會為單一圖磚的暫時失敗發出 error；地圖已載入後不應因此遮住整張圖。
+      // Worker、style 與首次載入錯誤則是致命的，必須明確呈現，不能再留下無訊息空白。
+      if (
+        !didLoad ||
+        /worker|dynamically imported|style.*load|failed to fetch/i.test(message)
+      ) {
+        setMapError("3D 地圖資源載入失敗，請重新整理；若問題持續，請聯絡系統管理員。");
+      }
+    };
+
+    map.on("error", handleMapError);
     map.addControl(new NavigationControl(), "top-right");
 
     map.on("load", () => {
+      didLoad = true;
+      setMapError("");
       try {
       // --- 底圖降彩 ---
       // 必須在加入任何自訂圖層之前執行，此時樣式裡只有底圖圖層，
@@ -660,13 +684,15 @@ export default function CityMap3D({
       setMapLoaded(true);
       } catch (err) {
         console.error("[CityMap3D] Map load error:", err);
-        setMapLoaded(true); // still try to load data
+        setMapError("3D 地圖圖層初始化失敗，請重新整理後再試。");
+        setMapLoaded(true); // 保留已成功建立的圖層，避免整個儀表板失效
       }
     });
 
     mapRef.current = map;
 
     return () => {
+      map.off("error", handleMapError);
       if (popupRef.current) {
         popupRef.current.remove();
         popupRef.current = null;
