@@ -130,12 +130,8 @@ export default function App() {
           />
         </div>
 
-        <div
-          className={cn(
-            "flex-1 min-h-0 overflow-y-auto",
-            activeTab !== "injection" && "hidden",
-          )}
-        >
+        {/* 事件注入自己撐滿剩餘高度，左右兩欄各自捲動，整頁不出現外層捲軸 */}
+        <div className={cn("flex-1 min-h-0", activeTab !== "injection" && "hidden")}>
           <InjectionTab />
         </div>
       </main>
