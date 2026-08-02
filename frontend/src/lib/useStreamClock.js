@@ -16,6 +16,11 @@ function toMs(stamp) {
   return stamp ? new Date(stamp.replace(" ", "T")).getTime() : 0;
 }
 
+/**
+ * 對外的時間字串一律 `YYYY-MM-DD HH:MM`（全域約束：時間格式統一），
+ * 這也是 /api/status?ts= 唯一接受的格式。
+ * 秒數只用於播放頭讀數的顯示，不進入這個字串，見 playheadMs。
+ */
 export function toStamp(ms) {
   const d = new Date(ms);
   const pad = (n) => String(n).padStart(2, "0");
@@ -189,8 +194,12 @@ export default function useStreamClock() {
     windowMs,
     windowMinutes: WINDOW_MINUTES,
     playheadStamp: ready ? stampAtOffset(offsetMs) : "",
+    // 播放頭的毫秒位置：時間軸讀數要顯示到秒，就用這個值格式化。
+    // 資料時間仍以 playheadStamp（到分）為準，兩者不會混用。
+    playheadMs: ready ? datasetMsAtOffset(offsetMs) : 0,
     liveStamp: ready ? stampAtOffset(0) : "",
     behindMinutes: Math.round(offsetMs / MINUTE_MS),
+    behindSeconds: Math.round(offsetMs / 1000),
     cycle: spanMs > 0 ? Math.floor(liveElapsedMs / spanMs) : 0,
     spanMs,
     // 狀態

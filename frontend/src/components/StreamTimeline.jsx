@@ -8,10 +8,23 @@ const MINUTE_MS = 60000;
 const PX_PER_LABEL = 92;
 const TICK_CHOICES_MINUTES = [1, 2, 5, 10, 15, 30, 60, 120, 180];
 
+const pad2 = (n) => String(n).padStart(2, "0");
+
+// 刻度標籤：刻度間隔都是整分鐘，秒數永遠是 00，顯示到分就好
 function timeLabel(ms) {
   const d = new Date(ms);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+// 播放頭讀數：時、分為主，秒數以次級樣式附在後面。
+// 資料時間仍以 playheadStamp（到分）為準，秒數只表示播放位置。
+function clockParts(ms) {
+  if (!ms) return { hm: "--:--", ss: "--" };
+  const d = new Date(ms);
+  return {
+    hm: `${pad2(d.getHours())}:${pad2(d.getMinutes())}`,
+    ss: pad2(d.getSeconds()),
+  };
 }
 
 function pickTickMinutes(windowMinutes, width) {
@@ -40,7 +53,9 @@ export default function StreamTimeline({ stream, className = "" }) {
     windowMs = 60 * MINUTE_MS,
     windowMinutes = 60,
     playheadStamp = "",
+    playheadMs = 0,
     behindMinutes = 0,
+    behindSeconds = 0,
     spanMs = MINUTE_MS,
     isLive = false,
     isPlaying = false,
@@ -108,6 +123,7 @@ export default function StreamTimeline({ stream, className = "" }) {
   const actions = useRef({ skipMinutes, goLive });
   actions.current = { skipMinutes, goLive };
   const tickMinutes = pickTickMinutes(windowMinutes, width || 800);
+  const clock = clockParts(ready ? playheadMs : 0);
 
   // [ 往回看、] 往直播方向前進、L 回到 LIVE
   useEffect(() => {
@@ -178,14 +194,18 @@ export default function StreamTimeline({ stream, className = "" }) {
               isLive ? "text-[var(--status-success)]" : "text-[var(--foreground)]",
             )}
           >
-            {playheadStamp ? playheadStamp.slice(11, 16) : "--:--"}
+            {clock.hm}
+            {/* 秒數為次級資訊：小一級且用 muted 色，避免被誤讀成資料時間 */}
+            <span className="text-sm font-medium text-[var(--muted-foreground)]">
+              :{clock.ss}
+            </span>
           </span>
           <span className="text-xs text-[var(--muted-foreground)] font-mono">
             {playheadStamp ? playheadStamp.slice(0, 10) : ""}
           </span>
-          {!isLive && behindMinutes > 0 && (
-            <span className="text-xs text-[var(--muted-foreground)]">
-              落後 {behindMinutes} 分
+          {!isLive && behindSeconds > 0 && (
+            <span className="text-xs text-[var(--muted-foreground)] tabular-nums">
+              落後 {behindSeconds < 60 ? `${behindSeconds} 秒` : `${behindMinutes} 分`}
             </span>
           )}
         </div>
