@@ -22,7 +22,7 @@ export default function SopTriggerPanel({ dataTriggers, dataAsOf, className = ""
         )}
       >
         <PanelHeader count={0} dataAsOf={dataAsOf} />
-        <p className="text-sm text-[var(--muted-foreground)]">等待人流與信令資料</p>
+        <p className="text-sm text-[var(--muted-foreground)]">等待人流資料</p>
       </div>
     );
   }
@@ -123,7 +123,7 @@ function PanelHeader({ count, dataAsOf }) {
     <div className="flex items-center justify-between gap-2 mb-1">
       <div className="flex items-center gap-2">
         <Radar className="w-4 h-4 text-[var(--primary)]" />
-        <h2 className="text-sm font-semibold">人流與信令主動偵測</h2>
+        <h2 className="text-sm font-semibold">SOP 自動偵測</h2>
         {count > 0 && (
           <span className="bg-[var(--status-warning)] text-[var(--primary-foreground)] px-2 py-0.5 rounded-full text-[10px] font-bold">
             {count} 條觸發
