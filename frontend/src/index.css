@@ -120,8 +120,29 @@ body {
   animation: cc-toast-in 160ms ease-out;
 }
 
+/*
+ * 浮動面板進場動畫（自右下角升起）
+ * 供右下角的 AI 策略顧問聊天室使用。
+ */
+@keyframes cc-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.cc-panel-in {
+  animation: cc-panel-in 160ms ease-out;
+  transform-origin: bottom right;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .cc-toast-in {
+  .cc-toast-in,
+  .cc-panel-in {
     animation: none;
   }
 }

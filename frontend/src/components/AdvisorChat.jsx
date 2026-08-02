@@ -1,5 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, Gauge, Loader2, RotateCcw, Send, Sparkles, User, Wrench } from "lucide-react";
+import {
+  Bot,
+  Gauge,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  RotateCcw,
+  Send,
+  Sparkles,
+  User,
+  Wrench,
+  X,
+} from "lucide-react";
 import { cn } from "../lib/utils";
 
 const TOOL_LABELS = {
@@ -22,19 +34,26 @@ const SUGGESTIONS = [
 ];
 
 /**
- * AI 策略顧問（What-if 情境分析）
+ * AI 策略顧問（What-if 情境分析）— 對話內容
  *
- * 對話紀錄由 App 保管，切換分頁不會清空；session_id 一併帶給後端，
+ * 由 FloatingAdvisor 以右下角浮動聊天室的形式承載，本元件只負責填滿容器高度，
+ * 邊框、圓角與定位交給外層，同一份對話在任何分頁都看得到、也不會被切走。
+ *
+ * 對話紀錄由 App 保管，關閉聊天室不會清空；session_id 一併帶給後端，
  * 後端保留對話歷史，追問時顧問記得前一題。
  * 回覆會附上實際引用的 SOP 條文原文與呼叫過的計算工具，
  * 讓評審看得出答案是查出來的而不是模型自己編的。
  */
-export default function ChatTab({
+export default function AdvisorChat({
   messages,
   onMessagesChange,
   sessionId,
   initialMessages,
   simTime,
+  onClose,
+  expanded = false,
+  onToggleExpanded,
+  inputRef,
 }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -104,36 +123,67 @@ export default function ChatTab({
   };
 
   return (
-    <div className="bg-[var(--card)] rounded-lg border border-[var(--border)] flex flex-col h-[calc(100vh-260px)] min-h-[520px]">
-      <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-2 flex-wrap">
-        <Sparkles className="w-5 h-5 text-[var(--primary)]" />
-        <span className="text-sm font-semibold">AI 策略顧問 — What-if 情境分析</span>
-        {simTime && (
-          <span className="text-xs font-mono text-[var(--muted-foreground)]">
-            情境時間 {simTime}
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={reset}
-          className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-sm text-xs border border-[var(--border)] bg-[var(--muted)] text-[var(--muted-foreground)] hover:bg-[var(--accent)] transition focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
-        >
-          <RotateCcw className="w-3 h-3" />
-          重設對話
-        </button>
+    <div className="flex h-full min-h-0 flex-col bg-[var(--card)]">
+      <div className="shrink-0 px-4 py-2.5 border-b border-[var(--border)] flex items-center gap-2">
+        <Sparkles className="w-4 h-4 text-[var(--primary)] shrink-0" />
+        <div className="min-w-0">
+          <div className="text-sm font-semibold truncate">AI 策略顧問</div>
+          {simTime && (
+            <div className="text-xs font-mono text-[var(--muted-foreground)] truncate">
+              情境時間 {simTime}
+            </div>
+          )}
+        </div>
+        <div className="ml-auto flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={reset}
+            aria-label="重設對話"
+            title="重設對話"
+            className="p-1.5 rounded-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] transition focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
+          {onToggleExpanded && (
+            <button
+              type="button"
+              onClick={onToggleExpanded}
+              aria-label={expanded ? "縮小聊天室" : "放大聊天室"}
+              title={expanded ? "縮小" : "放大"}
+              className="p-1.5 rounded-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] transition focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
+            >
+              {expanded ? (
+                <Minimize2 className="w-3.5 h-3.5" />
+              ) : (
+                <Maximize2 className="w-3.5 h-3.5" />
+              )}
+            </button>
+          )}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="收起 AI 策略顧問"
+              title="收起"
+              className="p-1.5 rounded-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] transition focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4" aria-live="polite">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3" aria-live="polite">
         {messages.map((msg, idx) => (
-          <div key={idx} className={cn("flex gap-3", msg.role === "user" && "justify-end")}>
+          <div key={idx} className={cn("flex gap-2", msg.role === "user" && "justify-end")}>
             {msg.role === "assistant" && (
-              <div className="bg-[var(--primary)]/20 p-2 rounded-md h-fit shrink-0">
+              <div className="bg-[var(--primary)]/20 p-1.5 rounded-md h-fit shrink-0">
                 <Bot className="w-4 h-4 text-[var(--primary)]" />
               </div>
             )}
             <div
               className={cn(
-                "max-w-[80%] rounded-lg px-4 py-3",
+                "max-w-[85%] min-w-0 rounded-lg px-3 py-2",
                 msg.role === "user"
                   ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
                   : "bg-[var(--secondary)] text-[var(--foreground)]",
@@ -213,7 +263,7 @@ export default function ChatTab({
               )}
             </div>
             {msg.role === "user" && (
-              <div className="bg-[var(--secondary)] p-2 rounded-md h-fit shrink-0">
+              <div className="bg-[var(--secondary)] p-1.5 rounded-md h-fit shrink-0">
                 <User className="w-4 h-4 text-[var(--muted-foreground)]" />
               </div>
             )}
@@ -221,11 +271,11 @@ export default function ChatTab({
         ))}
 
         {loading && (
-          <div className="flex gap-3">
-            <div className="bg-[var(--primary)]/20 p-2 rounded-md h-fit">
+          <div className="flex gap-2">
+            <div className="bg-[var(--primary)]/20 p-1.5 rounded-md h-fit">
               <Bot className="w-4 h-4 text-[var(--primary)]" />
             </div>
-            <div className="bg-[var(--secondary)] rounded-lg px-4 py-3 flex items-center gap-2">
+            <div className="bg-[var(--secondary)] rounded-lg px-3 py-2 flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin text-[var(--primary)]" />
               <span className="text-xs text-[var(--muted-foreground)]">
                 查詢路網資料與 SOP 條文中...
@@ -238,7 +288,7 @@ export default function ChatTab({
 
       {/* 建議問題：評審不必自己想怎麼問 */}
       {messages.length <= 1 && (
-        <div className="px-5 pb-2 flex flex-wrap gap-1.5">
+        <div className="shrink-0 px-4 pb-2 flex flex-wrap gap-1.5">
           {SUGGESTIONS.map((s) => (
             <button
               key={s}
@@ -253,27 +303,28 @@ export default function ChatTab({
         </div>
       )}
 
-      <div className="px-5 py-4 border-t border-[var(--border)]">
-        <div className="flex gap-3">
+      <div className="shrink-0 px-4 py-3 border-t border-[var(--border)]">
+        <div className="flex gap-2">
           <label className="sr-only" htmlFor="whatif-input">
             What-if 情境問題
           </label>
           <input
             id="whatif-input"
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) send();
             }}
             placeholder="輸入 What-if 情境問題..."
-            className="flex-1 bg-[var(--secondary)] border border-[var(--input)] rounded-md px-4 py-3 text-sm placeholder-[var(--muted-foreground)] focus:outline-none focus:ring-[3px] focus:ring-[var(--ring)]/30 transition"
+            className="flex-1 min-w-0 bg-[var(--secondary)] border border-[var(--input)] rounded-md px-3 py-2 text-sm placeholder-[var(--muted-foreground)] focus:outline-none focus:ring-[3px] focus:ring-[var(--ring)]/30 transition"
           />
           <button
             type="button"
             onClick={() => send()}
             disabled={loading || !input.trim()}
             aria-label="送出問題"
-            className="bg-[var(--primary)] hover:opacity-90 disabled:opacity-50 disabled:pointer-events-none text-[var(--primary-foreground)] rounded-md px-5 py-3 transition focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
+            className="shrink-0 bg-[var(--primary)] hover:opacity-90 disabled:opacity-50 disabled:pointer-events-none text-[var(--primary-foreground)] rounded-md px-3.5 py-2 transition focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
           >
             <Send className="w-4 h-4" />
           </button>

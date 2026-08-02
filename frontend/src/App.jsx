@@ -1,18 +1,17 @@
 import { useState } from "react";
-import { Activity, AlertTriangle, BarChart3, Bot, Shield, Siren } from "lucide-react";
+import { Activity, AlertTriangle, BarChart3, Shield, Siren } from "lucide-react";
 import { cn } from "./lib/utils";
 import useNetworkStatus from "./lib/useNetworkStatus";
 import DashboardTab from "./components/DashboardTab";
 import IncidentTab from "./components/IncidentTab";
 import InjectionTab from "./components/InjectionTab";
-import ChatTab from "./components/ChatTab";
+import FloatingAdvisor from "./components/FloatingAdvisor";
 import useStreamClock from "./lib/useStreamClock";
 
 const TABS = [
   { id: "dashboard", label: "即時儀表板", icon: BarChart3 },
   { id: "incidents", label: "路網即時監控", icon: Activity },
   { id: "injection", label: "事件注入", icon: Siren },
-  { id: "chat", label: "AI 策略顧問", icon: Bot },
 ];
 
 const INITIAL_CHAT = [
@@ -143,17 +142,21 @@ export default function App() {
         >
           <InjectionTab />
         </div>
-
-        <div className={cn("flex-1 min-h-0", activeTab !== "chat" && "hidden")}>
-          <ChatTab
-            messages={chatMessages}
-            onMessagesChange={setChatMessages}
-            sessionId={chatSessionId}
-            initialMessages={INITIAL_CHAT}
-            simTime={network.timestamp}
-          />
-        </div>
       </main>
+
+      {/*
+        顧問改成儀表板右下角的浮動聊天室：只在主頁出現，避免蓋住監控頁的地圖操作
+        與事件注入的表單。對話紀錄由 App 保管，離開主頁再回來仍是同一段對話。
+      */}
+      {activeTab === "dashboard" && (
+        <FloatingAdvisor
+          messages={chatMessages}
+          onMessagesChange={setChatMessages}
+          sessionId={chatSessionId}
+          initialMessages={INITIAL_CHAT}
+          simTime={network.timestamp}
+        />
+      )}
     </div>
   );
 }
