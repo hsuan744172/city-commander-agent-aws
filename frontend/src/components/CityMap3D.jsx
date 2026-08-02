@@ -11,6 +11,8 @@ import {
   hitAreaWidth,
 } from "../lib/mapLineStyle";
 import { applyBasemapTone } from "../lib/basemapTone";
+import { createCameraDirector } from "../lib/mapCamera";
+import { Crosshair, Hand, Orbit } from "lucide-react";
 
 // MapLibre 6 的預設 worker URL 依賴 import.meta.url；經 Vite bundle 後會誤指向
 // /assets/maplibre-gl-worker.mjs，正式映像並沒有該檔案。明確交給 Vite 打包 worker，
@@ -279,6 +281,20 @@ function buildRoadGeoJSON(segments, selectedId = null) {
 }
 
 /**
+ * 把聚焦目標換算成地圖座標。
+ * 路段取線段中點（不是端點，端點通常落在路口外），站點直接取座標。
+ */
+function resolveFocusCenter(target) {
+  if (!target) return null;
+  if (target.stationId && STATION_COORDS[target.stationId]) {
+    return STATION_COORDS[target.stationId];
+  }
+  const coords = SEGMENT_COORDS[target.segmentId];
+  if (!coords) return null;
+  return interpolateAlongLine(coords, 0.5);
+}
+
+/**
  * CityMap3D — 使用 MapLibre GL JS 建立 3D 城市地圖
  * - OpenFreeMap 向量圖磚 + 3D 建築
  * - 道路線依飽和度即時漸變色
@@ -290,15 +306,21 @@ export default function CityMap3D({
   selectedSegmentId = null,
   onSegmentClick,
   thresholds = null,
+  focusTarget = null,
   className = "",
 }) {
   const mapContainer = useRef(null);
   const mapRef = useRef(null);
   const popupRef = useRef(null);
+  const directorRef = useRef(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState("");
+  // 自動導播狀態：idle / flying / orbiting / held / released
+  const [cameraState, setCameraState] = useState("idle");
   const onSegmentClickRef = useRef(onSegmentClick);
   onSegmentClickRef.current = onSegmentClick;
+  // 記住最後一次的聚焦目標，指揮官接手後仍可按「重新聚焦」回到事件點
+  const lastFocusRef = useRef(null);
 
   // 初始化地圖
   useEffect(() => {
@@ -707,6 +729,38 @@ export default function CityMap3D({
     };
   }, []);
 
+  // 相機導播：地圖就緒後建立，卸載時解掉 DOM 監聽與動畫迴圈
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current) return;
+    const director = createCameraDirector(mapRef.current, {
+      onStateChange: setCameraState,
+    });
+    directorRef.current = director;
+    return () => {
+      director.dispose();
+      directorRef.current = null;
+    };
+  }, [mapLoaded]);
+
+  // 突發事件 → 飛到事件點並開始環繞。focusTarget.key 變化才算新事件，
+  // 路網每次輪詢重新取回同一筆預警時不會把鏡頭一直拉回去。
+  // mapLoaded 也列入依賴：預警比地圖載入更早到時，等導播建立好會補飛一次
+  useEffect(() => {
+    if (!directorRef.current || !focusTarget?.key) return;
+    const center = resolveFocusCenter(focusTarget);
+    if (!center) return;
+    lastFocusRef.current = { ...focusTarget, center };
+    directorRef.current.focus({ center, orbit: focusTarget.orbit !== false });
+  }, [focusTarget?.key, mapLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const refocus = () => {
+    const target = lastFocusRef.current;
+    if (!target || !directorRef.current) return;
+    directorRef.current.focus({ center: target.center, orbit: true });
+  };
+
+  const autoDriving = cameraState === "flying" || cameraState === "orbiting";
+
   // 當 segments 資料更新時，更新道路圖層
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return;
@@ -792,6 +846,45 @@ export default function CityMap3D({
           </div>
         </div>
       )}
+      {/* 自動導播狀態：正在追蹤時告知可隨時接手，接手後留一個回到事件點的入口 */}
+      {(autoDriving || cameraState === "released") && lastFocusRef.current && (
+        <div
+          className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)]/92 px-3 py-1.5 shadow-sm backdrop-blur-sm"
+          aria-live="polite"
+        >
+          {autoDriving ? (
+            <>
+              <Orbit className="w-3.5 h-3.5 shrink-0 text-[var(--status-error)] animate-spin [animation-duration:3s]" />
+              <span className="text-xs font-medium">
+                自動追蹤 {lastFocusRef.current.label || lastFocusRef.current.segmentId}
+              </span>
+              <span className="text-xs text-[var(--muted-foreground)]">· 操作地圖即接手</span>
+              <button
+                type="button"
+                onClick={() => directorRef.current?.release("user")}
+                className="ml-1 flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-[var(--muted-foreground)] transition hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
+              >
+                <Hand className="w-3 h-3" />
+                接手
+              </button>
+            </>
+          ) : (
+            <>
+              <Hand className="w-3.5 h-3.5 shrink-0 text-[var(--muted-foreground)]" />
+              <span className="text-xs text-[var(--muted-foreground)]">已由您操控</span>
+              <button
+                type="button"
+                onClick={refocus}
+                className="ml-1 flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-[var(--foreground)] transition hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:ring-[var(--ring)] focus-visible:ring-[3px]"
+              >
+                <Crosshair className="w-3 h-3" />
+                重新聚焦{lastFocusRef.current.label || ""}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* 圖例 */}
       <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-md text-xs z-10">
         <div className="font-semibold text-gray-700 mb-1.5">路段飽和度</div>

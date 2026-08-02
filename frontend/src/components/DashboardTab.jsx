@@ -25,6 +25,20 @@ import AlertCenter from "./AlertCenter";
 // 紀錄上限：Demo 的共同時間軸只有十幾格，留 20 筆足夠且不會無限成長
 const MAX_ALERT_HISTORY = 20;
 
+/**
+ * 挑一個最該讓鏡頭飛過去的路段：A 級優先於 B 級，同級以「城市應變觸發路段」
+ * 為先，再比飽和度。觸發路段的認定沿用後端的 is_trigger_segment，
+ * 前端不自行判斷哪幾段屬於觸發路段。
+ */
+function pickFocusSegment(abnormal) {
+  if (!abnormal.length) return null;
+  const weight = (s) =>
+    (s.level === "A" ? 200 : 100) +
+    (s.is_trigger_segment ? 50 : 0) +
+    (s.saturation_score || 0);
+  return [...abnormal].sort((a, b) => weight(b) - weight(a))[0];
+}
+
 export default function DashboardTab({ network, stream, onInspectSegment }) {
   const {
     segments,
@@ -41,6 +55,8 @@ export default function DashboardTab({ network, stream, onInspectSegment }) {
   const [alertHistory, setAlertHistory] = useState([]);
   const [activeAlertId, setActiveAlertId] = useState(null);
   const seenSignatureRef = useRef(null);
+  // 地圖相機的聚焦目標：偵測到新的預警時換一次，CityMap3D 依此飛抵並環繞
+  const [focusTarget, setFocusTarget] = useState(null);
 
   // 異常特徵：異常路段組合或觸發條款有變化就視為一筆新的預警。
   // 原本用一個 boolean 記「已彈過」，整場 Demo 只會跳一次，
@@ -115,6 +131,17 @@ export default function DashboardTab({ network, stream, onInspectSegment }) {
     setAlertHistory((prev) => [entry, ...prev].slice(0, MAX_ALERT_HISTORY));
     setActiveAlertId(entry.id);
     loadSummary(entry.id, timestamp);
+
+    // 自動導播：鏡頭飛到最嚴重的路段並環繞，直到指揮官操作地圖接手。
+    // key 用預警 id，同一筆預警不會因為輪詢而把鏡頭反覆拉回去。
+    const focus = pickFocusSegment(abnormal);
+    if (focus) {
+      setFocusTarget({
+        key: entry.id,
+        segmentId: focus.segment_id,
+        label: focus.road_name,
+      });
+    }
   }, [signature, timestamp, segments, monitoredAlerts, loadSummary]);
 
   return (
@@ -129,6 +156,7 @@ export default function DashboardTab({ network, stream, onInspectSegment }) {
             segments={segments}
             stations={stations}
             thresholds={thresholds}
+            focusTarget={focusTarget}
             onSegmentClick={onInspectSegment}
             className="flex-1 min-h-0 rounded-b-none"
           />
