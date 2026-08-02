@@ -5,9 +5,12 @@ City Commander Agent — FastAPI 後端入口
 部署：單一 Docker 映像 → Amazon ECR → Amazon ECS Fargate → Application Load Balancer
 
 時間模型：
-  後端內建離散模擬時鐘 (backend/sim_clock.py)，依真實時間逐格推進資料集。
-  時鐘只會落在車流與人流「同時」具有完整切片的共同時間軸上，不做插值。
-  前端只需要拉 GET /api/status 取「當下狀態」，不需要知道時間軸。
+  後端內建模擬時鐘 (backend/sim_clock.py)。預設 live 模式：模擬時間以實際時間
+  1:1 前進（不加速），跑完資料集就從頭再播一次（SIM_CLOCK_LOOP），因此有限測資
+  會呈現為不間斷的即時路況串流。時間連續（分鐘解析度），落在兩筆量測之間時由
+  資料層插值；playback 等離散模式則只走車流與人流都有完整切片的共同時間軸。
+  GET /api/stream 回報永不停止的 live 邊界；儀表板以它為基準決定要跟播 (LIVE)
+  或回看較早的時間，再用 ?ts= 取該時間的狀態，因此回看不會影響其他連線。
   任何端點都可用 ?ts=YYYY-MM-DD HH:MM 做單次時間覆寫（不影響全域時鐘，
   且覆寫時間可落在共同時間軸之外，此時才會啟用 traffic_math 的插值語意）。
 
@@ -22,6 +25,7 @@ Endpoints:
   GET  /api/cameras/{id}/{cam}/stream   → MJPEG 代理串流
   GET  /api/cameras/{id}/{cam}/snapshot → 單張畫面
   GET  /api/cameras/{id}/{cam}/frame    → 畫面年齡與上游狀態
+  GET  /api/stream         → 串流播放狀態 (循環播放的 live 邊界 + 時間軸)
   GET  /api/timeline       → 資料集所有時間點
   GET  /api/clock          → 模擬時鐘狀態
   POST /api/clock          → 調整時鐘 (mode / sim_time / speed / interval / loop)
@@ -657,6 +661,22 @@ async def resume_clock():
 @app.post("/api/clock/reset")
 async def reset_clock():
     return sim_clock.clock.reset()
+
+
+@app.get("/api/stream")
+async def get_stream():
+    """
+    串流播放狀態（前端播放器唯一需要的時間來源）。
+
+    模擬時間以「實際時間」1:1 前進（SIM_LIVE_SPEED=1，不加速），跑完資料集就從
+    頭再播一次，因此有限測資會呈現為持續不斷的即時路況。回傳的 live 邊界是「現
+    在直播點」，不受 pause 或事件凍結影響，前端因此可以：
+      - LIVE：跟著 live_time 走
+      - 回看：自行落後一段時間，再用 /api/status?ts= 取當時的路網狀態
+        （?ts= 只影響單次請求，不會動到全域時鐘，也不影響其他連線）
+    timeline 是資料集實際有量測的時間點，供時間軸畫刻度；時間軸本身是連續的。
+    """
+    return sim_clock.live_state()
 
 
 @app.get("/api/timeline")

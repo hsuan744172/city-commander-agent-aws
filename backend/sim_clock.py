@@ -36,15 +36,21 @@ TRAFFIC_FLOW_FILENAME = "city_traffic_flow.csv"
 CROWD_DENSITY_FILENAME = "signaling_crowd_density.csv"
 
 TIME_FMT = "%Y-%m-%d %H:%M"
-MODES = ("playback", "fixed", "latest", "smooth", "auto")
-PLAYING_MODES = frozenset({"playback", "smooth", "auto"})
-CONTINUOUS_MODES: tuple[str, ...] = ()
+# live     = 連續模式，模擬時間以實際時間 1:1 前進，跑完資料集再從頭播（預設）
+# playback = 離散模式，每 SIM_CLOCK_INTERVAL 秒跳一格共同時間切片
+LIVE_MODE = "live"
+MODES = (LIVE_MODE, "playback", "fixed", "latest", "smooth", "auto")
+PLAYING_MODES = frozenset({LIVE_MODE, "playback", "smooth", "auto"})
+CONTINUOUS_MODES: tuple[str, ...] = (LIVE_MODE,)
 
-DEFAULT_MODE = "playback"
+DEFAULT_MODE = LIVE_MODE
 DEFAULT_INTERVAL = 1.0
 DEFAULT_SPEED = 60.0
 DEFAULT_POLL = 1.0
-DEFAULT_LOOP = False
+# 測資量有限，預設循環播放，讓後端持續產生「即時」路況串流。
+DEFAULT_LOOP = True
+# live 模式的倍率。1.0 = 與實際時間同步，不加速。
+DEFAULT_LIVE_SPEED = 1.0
 
 _TRAFFIC_REQUIRED_COLUMNS = (
     "Timestamp",
@@ -275,6 +281,10 @@ class SimulationClock:
         self._pre_freeze_mode: str | None = None
         self._pre_freeze_time: pd.Timestamp | None = None
         self._prev_mode: str | None = None
+        # live 邊界（串流的「現在」）的錨點，與 mode / pause / freeze 無關
+        self._live_anchor_real = 0.0
+        self._live_anchor_offset = 0.0
+        self.live_speed = DEFAULT_LIVE_SPEED
         self.reset()
 
     def common_timeline(self) -> list[pd.Timestamp]:
@@ -294,12 +304,18 @@ class SimulationClock:
             self.mode = configured_mode
             self.interval = _env_float("SIM_CLOCK_INTERVAL", DEFAULT_INTERVAL)
             self.speed = _env_float("SIM_CLOCK_SPEED", DEFAULT_SPEED)
+            self.live_speed = _env_float("SIM_LIVE_SPEED", DEFAULT_LIVE_SPEED)
             self.poll = _env_float("SIM_CLOCK_POLL", DEFAULT_POLL)
             self.loop = _env_bool("SIM_CLOCK_LOOP", DEFAULT_LOOP)
             self._prev_mode = None
             values = self.common_timeline()
             start = parse_time(os.environ.get("SIM_CLOCK_START"))
             self._anchor(start if start is not None else self._timeline_start(values))
+            # SIM_CLOCK_START 同時決定串流從資料集的哪個時間點開始播
+            offset = 0.0
+            if values and start is not None:
+                offset = max(0.0, (self._anchor_sim - values[0]).total_seconds())
+            self._anchor_live(offset)
             return self.state()
 
     def configure(
@@ -329,6 +345,9 @@ class SimulationClock:
             if poll is not None and float(poll) <= 0:
                 raise ValueError("poll 必須大於 0")
 
+            # 改變節奏前先記下 live 邊界播到哪，換算後重新錨定才不會跳時間
+            live_elapsed = self._live_elapsed_locked()
+
             self.mode = normalized_mode
             self.speed = float(speed) if speed is not None else self.speed
             self.interval = float(interval) if interval is not None else self.interval
@@ -336,6 +355,7 @@ class SimulationClock:
             self.loop = bool(loop) if loop is not None else self.loop
             self._prev_mode = None
             self._anchor(target if target is not None else current)
+            self._anchor_live(live_elapsed)
             return self.state()
 
     def play(self) -> dict:
@@ -374,6 +394,9 @@ class SimulationClock:
             self._require_unfrozen("tick")
             if self.mode not in PLAYING_MODES:
                 return self.state()
+            if self.mode == LIVE_MODE:
+                # 連續模式沒有「下一格」的概念，時間本來就跟著實際時間走
+                return self.state()
             self._move_steps(1)
             return self.state()
 
@@ -384,6 +407,25 @@ class SimulationClock:
             self._require_unfrozen("advance")
             if minutes is not None and steps is not None:
                 raise ValueError("minutes 與 steps 只能提供一項")
+            if minutes is None and steps is None:
+                raise ValueError("請提供 minutes 或 steps")
+            if self.mode == LIVE_MODE:
+                # 手動移動時間等於離開直播：凍結在目標時間（前端回看不走這條路，
+                # 它是用 ?ts= 查詢，不會動到全域時鐘）
+                base = self._live_now_locked(self.common_timeline())
+                if steps is not None:
+                    values = self.common_timeline()
+                    index = _index_at_or_before(values, base) if values else 0
+                    target = (
+                        values[self._bounded_index(index + int(steps), len(values))]
+                        if values
+                        else base
+                    )
+                else:
+                    target = base + timedelta(minutes=float(minutes))
+                self.mode = "fixed"
+                self._anchor(target)
+                return self.state()
             if steps is not None:
                 self._move_steps(int(steps))
             elif minutes is not None:
@@ -440,6 +482,9 @@ class SimulationClock:
             values = self.common_timeline()
             if not values:
                 return self._anchor_sim
+            if self.mode == LIVE_MODE:
+                # 連續時間，不貼齊切片；落在兩筆量測之間時由資料層插值
+                return self._live_now_locked(values)
             if self.mode == "latest":
                 return values[-1]
             if self.mode == "fixed":
@@ -452,6 +497,100 @@ class SimulationClock:
     def resolve(self, explicit: object = None) -> pd.Timestamp:
         timestamp = parse_time(explicit)
         return timestamp if timestamp is not None else self.now()
+
+    # --- Live 邊界 (mock 即時串流) -------------------------------------------
+    #
+    # 模擬時間以「實際時間」1:1 前進（SIM_LIVE_SPEED=1），跑完資料集就從頭再播
+    # 一次，讓有限測資看起來像持續不斷的即時路況。與離散的 playback 模式不同，
+    # 這裡的時間是連續的（分鐘解析度），落在兩筆量測之間時由資料層插值。
+    #
+    # live 邊界刻意不受 pause / freeze / override 影響：前端播放器需要一條永不
+    # 停止的時間線，才能表達「LIVE」與「回看落後多久」。
+
+    def _anchor_live(self, elapsed_seconds: float) -> None:
+        self._live_anchor_offset = max(0.0, float(elapsed_seconds))
+        self._live_anchor_real = self._monotonic()
+
+    def _span_seconds(self, values: list[pd.Timestamp]) -> float:
+        """Wall-clock length of one replay of the dataset."""
+
+        if len(values) < 2:
+            return 60.0
+        return max((values[-1] - values[0]).total_seconds(), 60.0)
+
+    def _live_elapsed_locked(self) -> float:
+        """Simulated seconds streamed since the anchor, counting past replays."""
+
+        real = max(0.0, self._monotonic() - self._live_anchor_real)
+        return self._live_anchor_offset + real * self.live_speed
+
+    def _live_progress_locked(self, values: list[pd.Timestamp]) -> float:
+        """Simulated seconds into the current replay."""
+
+        span = self._span_seconds(values)
+        elapsed = self._live_elapsed_locked()
+        if self.loop:
+            return elapsed % span
+        return min(elapsed, span)
+
+    def _live_now_locked(self, values: list[pd.Timestamp]) -> pd.Timestamp:
+        if not values:
+            return self._anchor_sim
+        progress = self._live_progress_locked(values)
+        # 對外時間一律到分鐘，避免每秒都產生新的查詢時間
+        return (values[0] + timedelta(seconds=progress)).floor("min")
+
+    def live_now(self) -> pd.Timestamp:
+        """Current live timestamp; advances with real time and never pauses."""
+
+        with self._lock:
+            return self._live_now_locked(self.common_timeline())
+
+    def live_cycle(self) -> int:
+        """How many full replays of the dataset have already streamed."""
+
+        with self._lock:
+            values = self.common_timeline()
+            if not values or not self.loop:
+                return 0
+            return int(self._live_elapsed_locked() // self._span_seconds(values))
+
+    def next_minute_in_seconds(self) -> float:
+        """Real seconds until the live timestamp moves to the next minute."""
+
+        with self._lock:
+            elapsed = self._live_elapsed_locked()
+            remaining = 60.0 - (elapsed % 60.0)
+            return round(remaining / self.live_speed, 2) if self.live_speed > 0 else None
+
+    def live_state(self) -> dict:
+        """Everything a streaming player needs: span, pacing and the live edge."""
+
+        with self._lock:
+            values = self.common_timeline()
+            size = len(values)
+            span = self._span_seconds(values)
+            progress = self._live_progress_locked(values) if size else 0.0
+            live = self._live_now_locked(values)
+            elapsed = self._live_elapsed_locked()
+            return {
+                # 資料切片時間，供時間軸畫刻度（時間軸本身是連續的）
+                "timeline": [value.strftime(TIME_FMT) for value in values],
+                "timeline_size": size,
+                "timeline_start": values[0].strftime(TIME_FMT) if size else None,
+                "timeline_end": values[-1].strftime(TIME_FMT) if size else None,
+                "span_minutes": round(span / 60.0),
+                "live_time": live.strftime(TIME_FMT) if size else None,
+                "live_progress_minutes": int(progress // 60),
+                "slice_index": _index_at_or_before(values, live) if size else None,
+                "cycle": int(elapsed // span) if (size and self.loop) else 0,
+                "loop": self.loop,
+                # 1.0 = 與實際時間同步，不加速
+                "speed": self.live_speed,
+                "is_real_time": abs(self.live_speed - 1.0) < 1e-9,
+                "next_minute_in_seconds": self.next_minute_in_seconds(),
+                "server_time": datetime.now().strftime(TIME_FMT),
+            }
 
     def timeline_start(self) -> pd.Timestamp:
         return self._timeline_start(self.common_timeline())
@@ -466,6 +605,9 @@ class SimulationClock:
         with self._lock:
             if self.mode not in PLAYING_MODES or self._freeze_leases:
                 return None
+            if self.mode == LIVE_MODE:
+                # 連續模式：對外時間到分鐘，下一分鐘就是下一次變動
+                return self.next_minute_in_seconds()
             values = self.common_timeline()
             current = self.now()
             if not values or (not self.loop and current == values[-1]):
@@ -487,7 +629,8 @@ class SimulationClock:
                 "is_overridden": forced is not None,
                 "is_paused": self.mode == "fixed",
                 "is_playing": self.mode in PLAYING_MODES and not self._freeze_leases,
-                "is_continuous": False,
+                "is_continuous": self.mode == LIVE_MODE,
+                "live_speed": self.live_speed,
                 "sim_time": current.strftime(TIME_FMT),
                 "sim_time_iso": current.isoformat(),
                 "real_time": datetime.now().strftime(TIME_FMT),
@@ -558,3 +701,15 @@ def now_str() -> str:
 
 def state() -> dict:
     return clock.state()
+
+
+def live_now() -> pd.Timestamp:
+    return clock.live_now()
+
+
+def live_str() -> str:
+    return clock.live_now().strftime(TIME_FMT)
+
+
+def live_state() -> dict:
+    return clock.live_state()

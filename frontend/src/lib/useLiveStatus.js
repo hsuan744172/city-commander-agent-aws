@@ -9,6 +9,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
  *
  * 另外提供 refresh()：時鐘指令（暫停、跳格）不一定會改變模擬時間，
  * 這種情況後端不會推播，需要呼叫端主動拉一次。
+ *
+ * 傳入 ts（YYYY-MM-DD HH:MM）表示「回看」該時間：改用 GET /api/status?ts= 取回，
+ * 並忽略 WS 的即時推播（推播帶的是直播時間，會蓋掉回看畫面）。?ts= 只影響單次
+ * 請求，不會動到後端全域時鐘，也不影響其他連線。
  */
 const MIN_POLL_MS = 1000;
 const MAX_POLL_MS = 30000;
@@ -20,7 +24,7 @@ function wsUrl() {
   return `${protocol}//${window.location.host}/ws/dashboard`;
 }
 
-export default function useLiveStatus() {
+export default function useLiveStatus(ts = null) {
   const [status, setStatus] = useState(null);
   // websocket | polling | connecting | offline
   const [transport, setTransport] = useState("connecting");
@@ -33,6 +37,9 @@ export default function useLiveStatus() {
   const retryTimerRef = useRef(null);
   const cancelledRef = useRef(false);
   const pollingRef = useRef(false);
+  // 目前要看的時間放在 ref，取狀態的函式才能保持穩定，不會每次回看都重連 WS
+  const tsRef = useRef(ts);
+  tsRef.current = ts;
 
   const clearPoll = () => {
     if (pollTimerRef.current) {
@@ -42,8 +49,9 @@ export default function useLiveStatus() {
   };
 
   const fetchStatus = useCallback(async () => {
+    const at = tsRef.current;
     try {
-      const res = await fetch("/api/status");
+      const res = await fetch(at ? `/api/status?ts=${encodeURIComponent(at)}` : "/api/status");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (cancelledRef.current) return null;
@@ -64,6 +72,8 @@ export default function useLiveStatus() {
     (clock) => {
       clearPoll();
       if (cancelledRef.current || !pollingRef.current) return;
+      // 回看指定時間時資料不會自己變，等切到別的時間再抓
+      if (tsRef.current) return;
       const hint = clock?.suggested_poll_seconds ?? clock?.next_change_in_seconds;
       const delay =
         hint == null
@@ -113,6 +123,8 @@ export default function useLiveStatus() {
       try {
         const payload = JSON.parse(event.data);
         if (payload.type === "status") {
+          // 回看中：推播帶的是直播時間，套用會蓋掉使用者選的時間
+          if (tsRef.current) return;
           const { type, ...rest } = payload;
           setStatus(rest);
           setError(null);
@@ -146,10 +158,20 @@ export default function useLiveStatus() {
     socket.onclose = fallback;
   }, [startPolling, stopPolling]);
 
+  // 初次載入與每次切換回看時間都主動取一次；不等 WS 握手，畫面能立刻有內容。
+  // 從回看切回 LIVE 時，若目前走的是輪詢，也要把輪詢鏈接回去。
+  useEffect(() => {
+    let stale = false;
+    fetchStatus().then((data) => {
+      if (!stale && !tsRef.current) scheduleNextPoll(data?.clock);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [ts, fetchStatus, scheduleNextPoll]);
+
   useEffect(() => {
     cancelledRef.current = false;
-    // 先用 REST 拿一份初始狀態，不等 WS 握手，畫面能立刻有內容
-    fetchStatus();
     connect();
     return () => {
       cancelledRef.current = true;
@@ -162,7 +184,7 @@ export default function useLiveStatus() {
         socket.close();
       }
     };
-  }, [connect, fetchStatus, stopPolling]);
+  }, [connect, stopPolling]);
 
   return { status, transport, error, pushedReport, refresh: fetchStatus };
 }

@@ -8,14 +8,19 @@ import { cn } from "../lib/utils";
  * 所以儀表板不會主動預警；而第 4 條完全沒有實作。這個面板讓「智慧指揮官主動
  * 針對數據趨勢提供預警」有具體畫面。
  */
-export default function SopTriggerPanel({ dataTriggers, dataAsOf }) {
+export default function SopTriggerPanel({ dataTriggers, dataAsOf, className = "" }) {
   const checks = dataTriggers?.checks || [];
   const triggeredNumbers = dataTriggers?.triggered_numbers || [];
   const roamingStations = dataTriggers?.roaming_trigger_stations || [];
 
   if (checks.length === 0) {
     return (
-      <div className="bg-[var(--card)] rounded-lg border border-[var(--border)] p-4">
+      <div
+        className={cn(
+          "bg-[var(--card)] rounded-lg border border-[var(--border)] p-4",
+          className,
+        )}
+      >
         <PanelHeader count={0} dataAsOf={dataAsOf} />
         <p className="text-sm text-[var(--muted-foreground)]">等待人流與信令資料</p>
       </div>
@@ -23,10 +28,16 @@ export default function SopTriggerPanel({ dataTriggers, dataAsOf }) {
   }
 
   return (
-    <div className="bg-[var(--card)] rounded-lg border border-[var(--border)] p-4 space-y-3">
+    <div
+      className={cn(
+        "bg-[var(--card)] rounded-lg border border-[var(--border)] p-4 flex flex-col gap-3",
+        className,
+      )}
+    >
       <PanelHeader count={triggeredNumbers.length} dataAsOf={dataAsOf} />
 
-      <ul className="space-y-2">
+      {/* 儀表板不往下捲，條款過多時在面板內部捲動 */}
+      <ul className="space-y-2 overflow-y-auto min-h-0">
         {checks.map((check) => (
           <li
             key={check.sop_number}

@@ -94,27 +94,27 @@
     - _Requirements: 5.1, 5.5–5.13, 13.1–13.5_
 
 - [ ] 3. 實作 deterministic Response Engine、Decision Trace 與通報
-  - [~] 3.1 實作 SOP 2/3/5/6 三值判定與 typed evidence
+  - [ ] 3.1 實作 SOP 2/3/5/6 三值判定與 typed evidence
     - 以純函式依固定 Incident/Snapshot/SOP versions 產生 `triggered|not_triggered|indeterminate` 與 observed/operator/threshold/outcome/missing inputs。
     - Engine 不得讀檔、讀 global clock、呼叫 AI 或修改輸入。
     - _Requirements: 6.1–6.9_
 
-  - [~] 3.2 實作 Road Disruption 候選、方向、穩定排序與路徑方案
+  - [ ] 3.2 實作 Road Disruption 候選、方向、穩定排序與路徑方案
     - 候選只取事故 alternatives 原序，實作 capacity、雙向相交、location/flow direction、排除理由及 `(saturation,segment_id)` 排序。
     - 實作 congestion exception、長綠燈/大眾運輸建議與無主候選 `unplannable`，不得虛構路線。
     - _Requirements: 7.1–7.13_
 
-  - [~] 3.3 實作 ETE 與 Crowd/Signal 差異化 deterministic actions
+  - [ ] 3.3 實作 ETE 與 Crowd/Signal 差異化 deterministic actions
     - 實作 severity base、平均 saturation、壅塞加成與 unavailable/missing inputs。
     - 實作 Crowd 三項 recommended/not_recommended，以及 Signal intersections 去重與每路口 2 名警力。
     - _Requirements: 7.14–7.17, 8.3, 8.5, 8.6, 8.8_
 
-  - [~] 3.4 實作 CMS 多語 deterministic templates 與 facts validation
+  - [ ] 3.4 實作 CMS 多語 deterministic templates 與 facts validation
     - 依 nearby station roaming 決定繁中或四語；缺值時 SOP 6 為 indeterminate。
     - 每語言 ≤160 Unicode 字元且符合位置、指引、ETE/延誤事實；任一語言不一致則整組不可發布。
     - _Requirements: 8.9, 11.1–11.8, 11.12_
 
-  - [~] 3.5 組裝純 Response Engine、Decision Trace 與 Required Result evaluator
+  - [ ] 3.5 組裝純 Response Engine、Decision Trace 與 Required Result evaluator
     - 將分類、SOP、路徑、ETE、actions、CMS 組成可重現結果，記錄 input versions 並排除牆鐘/AI 欄位。
     - 建立三類 Required Result schema、缺項與成功判定；Trace 僅含結構化證據。
     - _Requirements: 5.12, 6.1, 6.2, 9.11, 14.2–14.4, 14.7–14.9_
@@ -170,27 +170,27 @@
     - _Requirements: 7.1–7.17, 8.1–8.10, 14.2–14.5_
 
 - [ ] 4. 建立 Incident Run lifecycle、Demo Session Store 與 API v1
-  - [~] 4.1 實作 concurrency-safe Demo Session Store 與狀態交易
+  - [ ] 4.1 實作 concurrency-safe Demo Session Store 與狀態交易
     - 在單一 lock 保存 run、preview、idempotency/promotion indexes、history、publication、threshold state；terminal immutable。
     - 實作 transition CAS、最近 100 筆、延遲 eviction、replay provenance 與無 active run 才可 reset。
     - _Requirements: 4.2–4.8, 4.20, 10.7, 10.8, 10.11, 10.14, 12.5, 12.6, 14.10_
 
-  - [~] 4.2 實作 lifespan Run Coordinator、階段計時與 deadline 封箱
+  - [ ] 4.2 實作 lifespan Run Coordinator、階段計時與 deadline 封箱
     - 實作 bounded queue/tasks、event isolation、clock lease、stage durations、progress。
     - 用 fakeable monotonic clock 實作 AI 15 秒、55 秒 fallback、58 秒 terminal resolution、shutdown/late-result guard。
     - _Requirements: 4.1, 4.9–4.20, 9.6, 9.7, 9.10, 14.5_
 
-  - [~] 4.3 實作 preset、JSON 與 upload preview API
+  - [ ] 4.3 實作 preset、JSON 與 upload preview API
     - 建立 preset list、JSON/upload preview endpoints，共用 parser 並回 ID/hash、摘要、future flags、required confirmations。
     - invalid 新內容不覆蓋 valid preview；內容/version 改變使確認失效；preview 不建 run/freeze。
     - _Requirements: 2.1–2.11, 5.4, 5.13, 12.1–12.3_
 
-  - [~] 4.4 實作 run 受理、查詢、歷程、重播與 reset API
+  - [ ] 4.4 實作 run 受理、查詢、歷程、重播與 reset API
     - 建立 run POST、單筆/列表 GET、replays/reset；1 秒內回 202、Location、Source Label、count、UTC+8 時間。
     - 實作 canonical idempotency、409 conflict、future confirmation、partial projection、固定歷史與 reset conflict。
     - _Requirements: 1.4, 1.5, 4.1, 4.9, 10.7–10.14, 12.3–12.6, 12.9–12.11_
 
-  - [~] 4.5 實作 API projection、統一錯誤 envelope 與安全 redaction
+  - [ ] 4.5 實作 API projection、統一錯誤 envelope 與安全 redaction
     - 所有 body 帶 contract `1.0`；4xx 有 stable code/path/message，5xx 僅 trace ID，不含 stack/credential/path/vendor text。
     - 保持事件原序、status/count/fallback；時間統一 UTC+8 並明示 `UTC+08:00`。
     - _Requirements: 3.20, 3.21, 4.19, 12.2, 12.7–12.11_
@@ -231,17 +231,17 @@
     - _Requirements: 4.1, 4.9, 4.14, 12.1–12.11_
 
 - [ ] 5. 實作 AI fallback、模擬發布與可觀測性
-  - [~] 5.1 實作 AI Narrative Adapter、Consistency Gate 與 fallback renderer
+  - [ ] 5.1 實作 AI Narrative Adapter、Consistency Gate 與 fallback renderer
     - 僅傳 Deterministic Result/SOP facts/schema；strict parse ≤500 字繁中 narrative/claims，對 SOP/ID/數值/時間/路徑/ETE/動作做 allow-list。
     - 實作 15 秒 timeout/cancel、四種 fallback reason、deterministic template、terminal/version guard；隱藏 vendor error，AI 不得改決策。
     - _Requirements: 6.10, 6.11, 9.1–9.10, 14.5_
 
-  - [~] 5.2 實作 Simulated Publish domain service 與 API
+  - [ ] 5.2 實作 Simulated Publish domain service 與 API
     - 建立 publication endpoint/message-version guard，只允許 publishable 語言；原子記錄全部選定語言、run、內容與 UTC+8 時間。
     - 任一驗證/寫入失敗不留 record；固定回 `Simulated_Publish－未連接真實通路`。
     - _Requirements: 8.9, 11.9–11.11_
 
-  - [~] 5.3 實作結構化 operational logs、metrics hooks 與敏感資訊遮罩
+  - [ ] 5.3 實作結構化 operational logs、metrics hooks 與敏感資訊遮罩
     - 以 trace/run/event ID 記 transition、duration、fallback、versions、counts、latency、AI/error、idempotency metrics。
     - 禁止完整 upload/prompt/credential/private path/stack/vendor body，提供可測 log/metrics sink。
     - _Requirements: 4.19, 9.7, 12.8_
@@ -262,17 +262,17 @@
     - _Requirements: 4.11–4.20, 9.4–9.10, 12.8, 14.5_
 
 - [ ] 6. 建立 Monitoring Alert bridge 與模組一時間整合
-  - [~] 6.1 實作 threshold crossing/rearm detector 與 Monitoring Alert store
+  - [ ] 6.1 實作 threshold crossing/rearm detector 與 Monitoring Alert store
     - 每路段分別維護 0.85 B 級/0.95 A 級 armed bit，只在 `< threshold` 到 `>= threshold` 建 alert，降回下方才 rearm。
     - 固定保存前後值、threshold、level、data time、唯一 ID、`time_series_alert` Source Label。
     - _Requirements: 1.1, 1.3, 13.5–13.11_
 
-  - [~] 6.2 實作 Monitoring Alert 升級 preview、確認與天然冪等
+  - [ ] 6.2 實作 Monitoring Alert 升級 preview、確認與天然冪等
     - 由 alert 預填時間、segment、前後 saturation、門檻、alert ID；明確確認後才建 `monitoring_promotion` Run。
     - 重複升級回首次 run；保留 provenance，不改 alert/rearm state，並區隔 scenario/json source。
     - _Requirements: 1.4–1.9, 5.2, 13.12, 13.14_
 
-  - [~] 6.3 實作 Monitoring/Clock v1 endpoints 與 dashboard bridge projection
+  - [ ] 6.3 實作 Monitoring/Clock v1 endpoints 與 dashboard bridge projection
     - 提供 clock query/play/pause/reset、alerts query、promotion preview；active run 時拒絕推進。
     - 既有 dashboard 使用同一 common slice，回 Traffic/Crowd 與 alert 關聯。
     - _Requirements: 5.1, 13.3–13.5, 13.12–13.14_
@@ -293,17 +293,17 @@
     - _Requirements: 1.3–1.11, 13.4–13.14_
 
 - [ ] 7. 實作前端預覽、確認與執行進度
-  - [~] 7.1 建立 Incident v1 API client、typed view model 與 reducer
+  - [ ] 7.1 建立 Incident v1 API client、typed view model 與 reducer
     - 建立 `empty→preview_valid→accepted/running→terminal/history`、錯誤 mapping、poll cancellation/retry/stale indicator。
     - 分離 valid preview 與新檔錯誤；內容/version 改變清 confirmation；所有 alert/run 顯示 Source Label。
     - _Requirements: 1.2, 2.9–2.11, 4.9, 10.1, 12.3, 12.4_
 
-  - [~] 7.2 實作 preset/JSON preview、future simulation 與明確確認 UI
+  - [ ] 7.2 實作 preset/JSON preview、future simulation 與明確確認 UI
     - 提供三 preset 卡、`.json` drop zone、數量/原序/category/位置/severity/時間/可能 SOP/errors。
     - 未來事件顯示預演標示並額外確認；取消不呼叫 run；reset 後兩次操作內可見 preset preview。
     - _Requirements: 1.7, 2.1, 2.2, 2.8–2.11, 5.4, 5.13, 14.1_
 
-  - [~] 7.3 實作 run 受理、每秒輪詢與 60 秒進度 UI
+  - [ ] 7.3 實作 run 受理、每秒輪詢與 60 秒進度 UI
     - 顯示 run ID、Source Label、stage、完成/總數、elapsed/60 秒；短暫失敗保留狀態並 1/2 秒 capped retry。
     - API 狀態可查後 2 秒內更新，terminal 停止輪詢並切固定結果。
     - _Requirements: 4.9, 4.14, 10.1, 12.4_
@@ -314,27 +314,27 @@
     - _Requirements: 1.2, 1.5, 1.7, 2.8–2.11, 4.9, 5.4, 10.1, 14.1_
 
 - [ ] 8. 實作前端結果、地圖、歷程與發布
-  - [~] 8.1 實作多事件切換與三類差異化結果區塊
+  - [ ] 8.1 實作多事件切換與三類差異化結果區塊
     - 依原始 index 建 tabs；分開 Deterministic Result、Decision Trace、AI/SOP 備援說明。
     - 顯示 Road 路徑/排除/號誌/ETE/CMS、Crowd 證據/分流/動作、Signal 路口/警力/時間/CMS 與對應完成訊息。
     - _Requirements: 8.1–8.10, 9.4, 9.9, 9.12, 10.2, 14.2–14.5_
 
-  - [~] 8.2 實作事件/路徑地圖與完全本地降級路網
+  - [ ] 8.2 實作事件/路徑地圖與完全本地降級路網
     - 擴充 bundled geometry，標事故紅、主綠、次藍虛線、壅塞橘、站點紫、不可用灰圖例。
     - tile 失敗切 local SVG/canvas；無座標/歷史 geometry 缺失顯示原因，不用目前資料替代。
     - _Requirements: 10.3–10.6, 10.10, 10.12, 14.6_
 
-  - [~] 8.3 實作最近 100 筆歷程、唯讀還原與 replay UI
+  - [ ] 8.3 實作最近 100 筆歷程、唯讀還原與 replay UI
     - 新至舊顯示 history，唯讀呈現固定 input/snapshot/trace/narrative/CMS/publication。
     - Replay 建新 run ID 並顯示 provenance，不修改原歷史。
     - _Requirements: 10.7–10.11, 13.14, 14.8_
 
-  - [~] 8.4 實作 Simulated Publish 與 Demo Reset UI
+  - [ ] 8.4 實作 Simulated Publish 與 Demo Reset UI
     - 僅允許通過 facts validation 的語言；確認/完成固定顯示 `Simulated_Publish－未連接真實通路`；失敗保持全未發布。
     - active run disable reset；成功後清 preview/confirmation/history/publish cache 並重抓 clock。
     - _Requirements: 8.9, 10.13, 10.14, 11.9–11.11, 14.10_
 
-  - [~] 8.5 將 v1 Incident 戰情頁、Monitoring 升級入口與既有 App 完整接線
+  - [ ] 8.5 將 v1 Incident 戰情頁、Monitoring 升級入口與既有 App 完整接線
     - 組裝 preview/progress/results/map/history/replay/publish/reset，並保留 legacy feature flag 回退。
     - Dashboard alert 提供明確升級與預填，維持兩模組 Source Label、clock/snapshot 關聯。
     - _Requirements: 1.2, 1.7, 10.1–10.14, 13.12–13.14_
@@ -345,7 +345,7 @@
     - _Requirements: 8.1–8.10, 9.4, 9.9, 9.12, 10.2–10.14, 11.9–11.11, 14.6_
 
 - [ ] 9. 完成後端接線、整合與 E2E 驗證
-  - [~] 9.1 將 Store、Coordinator、Clock、Snapshot、Engine、AI、Monitoring 與 v1 routers 接入 FastAPI lifespan
+  - [ ] 9.1 將 Store、Coordinator、Clock、Snapshot、Engine、AI、Monitoring 與 v1 routers 接入 FastAPI lifespan
     - 更新 application factory/startup/shutdown 與 single-process health guard，所有 mutation 共用 Demo Session 一致性邊界。
     - 保留 legacy/feature flag；v1 不走舊 interpolation、forced-route、AI-error-as-narrative。
     - _Requirements: 1.10, 4.1–4.20, 5.1, 6.1–6.11, 12.1–12.11_
@@ -365,7 +365,7 @@
     - 驗證 1/3/100 events timing、無 Bedrock/公網、OpenAPI/golden/source hashes 不漂移。
     - _Requirements: 2.2, 3.21, 4.1, 9.6, 9.7, 12.7, 12.8, 14.5–14.7_
 
-- [~] 10. Checkpoint－確認所有自動測試與建置通過
+- [ ] 10. Checkpoint－確認所有自動測試與建置通過
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

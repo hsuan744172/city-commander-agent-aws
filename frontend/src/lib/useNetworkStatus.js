@@ -8,6 +8,9 @@ import useLiveStatus from "./useLiveStatus";
  * 儀表板與事件處置頁共用同一份資料格式，避免各自實作訂閱邏輯。
  * 傳輸細節在 useLiveStatus，這裡只把後端欄位攤平成元件慣用的形狀。
  *
+ * @param {string|null} ts 要回看的模擬時間（YYYY-MM-DD HH:MM）。
+ *                         null 表示跟著後端時鐘的直播時間走。
+ *
  * @returns {{
  *   segments: Array, stations: Array, timestamp: string, dataAsOf: string,
  *   autoAdvisories: Array, monitoredAlerts: Array, dataTriggers: Object,
@@ -16,8 +19,8 @@ import useLiveStatus from "./useLiveStatus";
  *   refresh: Function,
  * }}
  */
-export default function useNetworkStatus() {
-  const { status, transport, error, pushedReport, refresh } = useLiveStatus();
+export default function useNetworkStatus(ts = null) {
+  const { status, transport, error, pushedReport, refresh } = useLiveStatus(ts);
 
   return useMemo(
     () => ({

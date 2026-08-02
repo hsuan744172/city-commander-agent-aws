@@ -3,27 +3,28 @@ import { AlertTriangle, Bot, Eye, Loader2, ShieldAlert, Siren, X } from "lucide-
 import ThreatGrid from "./ThreatGrid";
 import CityMap3D from "./CityMap3D";
 import SopTriggerPanel from "./SopTriggerPanel";
-import AutoAdvisoryPanel from "./AutoAdvisoryPanel";
+import StreamTimeline from "./StreamTimeline";
 import { cn } from "../lib/utils";
 
 /**
  * 即時儀表板
  *
- * 分成三個層次，對應 SOP 的語意而不是把所有異常混在一起：
- *   1. 自動應變（auto_advisories）— 只有 SOP 第 1 條的城市應變觸發路段才會啟動
- *   2. 僅監控（monitored_alerts）— 其餘路段達 A/B 級，只做紅黃燈顯示
- *   3. 資料型條款（data_triggers）— SOP 第 3、4、6 條，不需要事件注入就會主動偵測
+ * 一個畫面看完路網現況：地圖 + 串流時間軸、即時路網監測、人流與信令主動偵測
+ * （資料型條款 data_triggers，對應 SOP 第 3、4、6 條）。
+ *
+ * SOP 第 1 條的自動應變（auto_advisories）與僅監控清單（monitored_alerts）
+ * 不在這裡展開，改由「路網即時監控」分頁與下方的自動預警彈窗呈現，
+ * 儀表板才不會被長條列表撐出捲軸。
  *
  * 自動彈窗的摘要向 /api/alert-summary 取得（LLM 生成），門檻判定仍在後端程式，
  * 對應命題「摘要由 LLM 生成，門檻判定由程式運算」。
  */
-export default function DashboardTab({ network, onInspectSegment }) {
+export default function DashboardTab({ network, stream, onInspectSegment }) {
   const {
     segments,
     stations,
     timestamp,
     dataAsOf,
-    autoAdvisories,
     monitoredAlerts,
     dataTriggers,
     thresholds,
@@ -79,32 +80,36 @@ export default function DashboardTab({ network, onInspectSegment }) {
   };
 
   return (
-    <div className="space-y-4">
-      {/* 左為 3D 城市地圖，右為路段事件小卡；兩者點擊皆跳往建議書頁 */}
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
-        <CityMap3D
-          segments={segments}
-          stations={stations}
-          thresholds={thresholds}
-          onSegmentClick={onInspectSegment}
-          className="xl:col-span-3 h-[620px]"
-        />
+    // 填滿 App 給的剩餘高度：地圖與監測小卡吃掉可用空間，整頁不需要往下捲
+    <div className="h-full min-h-0 flex flex-col">
+      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-4 gap-4">
+        {/* 左欄：地圖與時間軸緊貼成一體，兩者之間不留間距，
+            共用外框圓角（地圖只圓上緣、時間軸只圓下緣） */}
+        <div className="xl:col-span-3 flex flex-col min-h-0">
+          <CityMap3D
+            segments={segments}
+            stations={stations}
+            thresholds={thresholds}
+            onSegmentClick={onInspectSegment}
+            className="flex-1 min-h-0 rounded-b-none"
+          />
+          <StreamTimeline stream={stream} className="shrink-0 rounded-t-none border-t-0" />
+        </div>
 
-        <ThreatGrid
-          segments={segments}
-          timestamp={timestamp}
-          onSelect={onInspectSegment}
-          className="xl:col-span-1 h-[620px]"
-        />
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-        <AutoAdvisoryPanel
-          advisories={autoAdvisories}
-          monitoredAlerts={monitoredAlerts}
-          onInspect={onInspectSegment}
-        />
-        <SopTriggerPanel dataTriggers={dataTriggers} dataAsOf={dataAsOf} />
+        {/* 右欄：即時路網監測，下方接資料型 SOP 的主動偵測 */}
+        <div className="xl:col-span-1 flex flex-col gap-4 min-h-0">
+          <ThreatGrid
+            segments={segments}
+            timestamp={timestamp}
+            onSelect={onInspectSegment}
+            className="flex-1 min-h-0"
+          />
+          <SopTriggerPanel
+            dataTriggers={dataTriggers}
+            dataAsOf={dataAsOf}
+            className="shrink-0 max-h-[45%]"
+          />
+        </div>
       </div>
 
       {!showAlert && signature && (

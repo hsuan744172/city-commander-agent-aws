@@ -6,7 +6,7 @@ import DashboardTab from "./components/DashboardTab";
 import IncidentTab from "./components/IncidentTab";
 import InjectionTab from "./components/InjectionTab";
 import ChatTab from "./components/ChatTab";
-import TimelineControl from "./components/TimelineControl";
+import useStreamClock from "./lib/useStreamClock";
 
 const TABS = [
   { id: "dashboard", label: "即時儀表板", icon: BarChart3 },
@@ -37,8 +37,12 @@ export default function App() {
     () => `commander_${Math.random().toString(36).slice(2, 10)}`,
   );
 
+  // 串流播放器決定「現在看的是哪個時間」。LIVE 時交給後端時鐘與 WS 推播，
+  // 回看時改用 /api/status?ts= 取當時的路網，不會動到後端全域時鐘。
+  const stream = useStreamClock();
+  const playheadTs = stream.isLive ? null : stream.playheadStamp || null;
   // 路網狀態只訂閱一次，全部分頁共用同一份，不會有多個輪詢／多條 WS。
-  const network = useNetworkStatus();
+  const network = useNetworkStatus(playheadTs);
 
   const inspectSegment = (segment) => {
     if (!segment?.segment_id) return;
@@ -51,8 +55,10 @@ export default function App() {
     (network.dataTriggers?.triggered_numbers?.length || 0);
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] flex flex-col">
-      <header className="bg-[var(--card)] border-b border-[var(--border)] px-6 py-3 shadow-xs">
+    // h-screen + overflow-hidden：儀表板以「剩餘高度」排版，一個畫面看完不必往下捲；
+    // 其他分頁需要長內容，改由各自的容器內部捲動。
+    <div className="h-screen overflow-hidden bg-[var(--background)] text-[var(--foreground)] flex flex-col">
+      <header className="shrink-0 bg-[var(--card)] border-b border-[var(--border)] px-6 py-3 shadow-xs">
         <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <div className="bg-[var(--primary)] p-2 rounded-lg">
@@ -97,27 +103,30 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-[1600px] mx-auto px-6 py-4">
+      <main className="flex-1 min-h-0 w-full max-w-[1600px] mx-auto px-6 py-4 flex flex-col gap-3">
         {network.error && (
-          <div className="mb-3 flex items-center gap-2 rounded-md border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-3 py-2 text-sm text-[var(--status-error)]">
+          <div className="shrink-0 flex items-center gap-2 rounded-md border border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-3 py-2 text-sm text-[var(--status-error)]">
             <AlertTriangle className="w-4 h-4 shrink-0" />
             無法取得路網狀態（{network.error}）；畫面顯示的可能是先前的資料。
           </div>
         )}
 
-        <TimelineControl
-          clock={network.clock}
-          dataMode={network.dataMode}
-          transport={network.transport}
-          onChanged={network.refresh}
-        />
-
         {/* 分頁保持掛載，切換時保留注入草稿、發布進度與顧問對話。 */}
-        <div className={cn(activeTab !== "dashboard" && "hidden")}>
-          <DashboardTab network={network} onInspectSegment={inspectSegment} />
+        {/* 儀表板剛好填滿剩餘高度，本身不捲動 */}
+        <div className={cn("flex-1 min-h-0", activeTab !== "dashboard" && "hidden")}>
+          <DashboardTab
+            network={network}
+            stream={stream}
+            onInspectSegment={inspectSegment}
+          />
         </div>
 
-        <div className={cn(activeTab !== "incidents" && "hidden")}>
+        <div
+          className={cn(
+            "flex-1 min-h-0 overflow-y-auto",
+            activeTab !== "incidents" && "hidden",
+          )}
+        >
           <IncidentTab
             network={network}
             selectedSegmentId={selectedSegmentId}
@@ -126,11 +135,16 @@ export default function App() {
           />
         </div>
 
-        <div className={cn(activeTab !== "injection" && "hidden")}>
+        <div
+          className={cn(
+            "flex-1 min-h-0 overflow-y-auto",
+            activeTab !== "injection" && "hidden",
+          )}
+        >
           <InjectionTab />
         </div>
 
-        <div className={cn(activeTab !== "chat" && "hidden")}>
+        <div className={cn("flex-1 min-h-0", activeTab !== "chat" && "hidden")}>
           <ChatTab
             messages={chatMessages}
             onMessagesChange={setChatMessages}
