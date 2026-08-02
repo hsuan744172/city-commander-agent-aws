@@ -335,6 +335,14 @@ export default function CityMap3D({
           (layer) => layer.type === "symbol" && layer.layout?.["text-field"]
         );
 
+        // 隱藏底圖所有 symbol 圖層（POI、路名、門牌全消失），
+        // 只留建築輪廓與我們自己疊上去的路段線、站點圓。
+        for (const layer of layers) {
+          if (layer.type === "symbol") {
+            map.setLayoutProperty(layer.id, "visibility", "none");
+          }
+        }
+
         // bright 樣式已提供 openmaptiles source，直接重用，避免重複 source ID。
         if (map.getSource("openmaptiles") && !map.getLayer("3d-buildings")) {
           map.addLayer(
@@ -387,29 +395,13 @@ export default function CityMap3D({
         paint: {
           "line-color": "#000000",
           "line-opacity": 0.01,
-          "line-width": 28,
-        },
-        layout: {
-          "line-cap": "round",
-          "line-join": "round",
-        },
-      });
-
-      // 路線外層發光（最寬、最模糊、最淡）
-      map.addLayer({
-        id: "traffic-roads-glow-outer",
-        type: "line",
-        source: "traffic-roads",
-        paint: {
-          "line-color": ["get", "color"],
+          // 命中區域需覆蓋加寬後的路面，否則點擊會落在路面上卻沒反應
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
-            13, 8,
-            16, 15,
-            18, 25,
+            13, 14,
+            16, 22,
+            18, 32,
           ],
-          "line-blur": 8,
-          "line-opacity": 0.2,
         },
         layout: {
           "line-cap": "round",
@@ -417,29 +409,7 @@ export default function CityMap3D({
         },
       });
 
-      // 路線中層發光（中寬、中模糊）
-      map.addLayer({
-        id: "traffic-roads-glow-inner",
-        type: "line",
-        source: "traffic-roads",
-        paint: {
-          "line-color": ["get", "color"],
-          "line-width": [
-            "interpolate", ["linear"], ["zoom"],
-            13, 4,
-            16, 8,
-            18, 13,
-          ],
-          "line-blur": 4,
-          "line-opacity": 0.4,
-        },
-        layout: {
-          "line-cap": "round",
-          "line-join": "round",
-        },
-      });
-
-      // 單選路段的額外粗外框
+      // 單選路段的外圈highlight（最寬，僅選中時出現）
       map.addLayer({
         id: "traffic-roads-selected-outline",
         type: "line",
@@ -449,12 +419,12 @@ export default function CityMap3D({
           "line-color": "#BA56DE",
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
-            13, 6,
-            16, 10,
-            18, 16,
+            13, 12,
+            16, 22,
+            18, 34,
           ],
-          "line-blur": 2,
-          "line-opacity": 0.5,
+          "line-blur": 0,
+          "line-opacity": 0.55,
         },
         layout: {
           "line-cap": "round",
@@ -462,21 +432,42 @@ export default function CityMap3D({
         },
       });
 
-      // 路線核心亮線（細、清晰）
+      // 路面描邊（深色 casing，比路面寬，做出實體道路的邊界）
+      map.addLayer({
+        id: "traffic-roads-casing",
+        type: "line",
+        source: "traffic-roads",
+        paint: {
+          "line-color": "#5A6472",
+          "line-width": [
+            "interpolate", ["linear"], ["zoom"],
+            13, 9,
+            16, 17,
+            18, 27,
+          ],
+          "line-blur": 0,
+          "line-opacity": 0.9,
+        },
+        layout: {
+          "line-cap": "round",
+          "line-join": "round",
+        },
+      });
+
+      // 路面主體（依後端分級著色的粗實線）
       map.addLayer({
         id: "traffic-roads-fill",
         type: "line",
         source: "traffic-roads",
         paint: {
-          "line-color": "#ffffff",
+          "line-color": ["get", "color"],
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
-            13, 0.8,
-            16, 1.5,
-            18, 2.5,
+            13, 6,
+            16, 13,
+            18, 21,
           ],
           "line-blur": 0,
-          "line-opacity": 0.8,
         },
         layout: {
           "line-cap": "round",
@@ -502,8 +493,8 @@ export default function CityMap3D({
             18, 5,
           ],
           "circle-color": "#ffffff",
-          "circle-blur": 0.3,
-          "circle-opacity": 0.9,
+          "circle-blur": 0,
+          "circle-opacity": 0.95,
         },
       });
 
