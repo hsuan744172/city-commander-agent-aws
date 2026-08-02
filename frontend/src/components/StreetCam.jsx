@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import { Video, VideoOff, Pause, Play, RefreshCw, MapPin, ExternalLink } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -40,6 +40,10 @@ export default function StreetCam({
   const [frameInfo, setFrameInfo] = useState(null);
 
   const videoRef = useRef(null);
+  const imageRef = useRef(null);
+  // captureFrame 必須是穩定的函式（會傳給呼叫端存進 state），所以畫面狀態改走 ref
+  const frameInfoRef = useRef(null);
+  frameInfoRef.current = frameInfo;
 
   // 取得該路段的攝影機清單
   useEffect(() => {
@@ -96,9 +100,30 @@ export default function StreetCam({
 
     // 官方端點回應 access-control-allow-origin: *，可直接播，不需後端轉送
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      // 原生播放（Safari）走網路層直送解碼器，沒有 CORS 就會污染 canvas，
+      // 報告截圖便取不到畫面。先帶 CORS 播，萬一上游不給標頭再退回無 CORS —
+      // 影像能不能看比截圖重要，不能為了報告把直播弄壞。
+      let corsAttempted = true;
+      video.crossOrigin = "anonymous";
+
+      const onError = () => {
+        if (!corsAttempted) return;
+        corsAttempted = false;
+        video.removeAttribute("crossorigin");
+        video.src = streamUrl;
+        video.play().catch(() => {});
+      };
+
+      video.addEventListener("error", onError);
       video.src = streamUrl;
       video.play().catch(() => {});
-      return () => { video.removeAttribute("src"); video.load(); };
+
+      return () => {
+        video.removeEventListener("error", onError);
+        video.removeAttribute("crossorigin");
+        video.removeAttribute("src");
+        video.load();
+      };
     }
 
     if (!Hls.isSupported()) {
@@ -143,8 +168,53 @@ export default function StreetCam({
     return () => { cancelled = true; clearInterval(timer); };
   }, [camBase, isHls]);
 
-  // 把當前鏡位回報給呼叫端（監控報告要嵌同一支鏡頭的畫面）。
-  // 報告一律走後端 /snapshot 代理端點：同源、且不論 HLS 或快照模式都取得到單張畫面。
+  /**
+   * 把螢幕上這一刻的畫面截下來，回傳 PNG data URL。
+   *
+   * 監控報告要的是「值班人員當下看到的那張畫面」，所以直接從正在播放的
+   * <video>／<img> 元素取像，而不是另外向後端要一張新的快照 — HLS 直播的
+   * 單張快照端點來源不同，有可能給出跟畫面上不一樣（甚至過舊）的內容。
+   *
+   * 取不到時回 null（尚未解碼、或 canvas 被跨來源污染），由呼叫端決定退路。
+   */
+  const captureFrame = useCallback(() => {
+    const media = isHls ? videoRef.current : imageRef.current;
+    if (!media) return null;
+
+    const width = isHls ? media.videoWidth : media.naturalWidth;
+    const height = isHls ? media.videoHeight : media.naturalHeight;
+    if (!width || !height) return null;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    try {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(media, 0, 0, width, height);
+      // 跨來源影像未通過 CORS 時，這行會拋 SecurityError
+      const dataUrl = canvas.toDataURL("image/png");
+      const info = frameInfoRef.current;
+      return {
+        dataUrl,
+        width,
+        height,
+        // screen = 螢幕實際畫面；呼叫端據此在報告標明擷取方式
+        method: "screen",
+        mode: isHls ? "hls" : "snapshot",
+        // 直播畫面必為上游真實影像；快照模式要看後端當時用的是上游還是合成畫面
+        is_mock: isHls ? false : Boolean(info?.is_mock),
+        captured_at: isHls ? null : info?.captured_at || null,
+        age_seconds: isHls ? null : info?.age_seconds ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }, [isHls]);
+
+  // 把當前鏡位與截圖能力回報給呼叫端（監控報告要嵌同一支鏡頭的畫面）。
+  // capture() 取的是螢幕實際畫面；取不到時呼叫端才退回 /snapshot 代理端點。
   const onCameraChangeRef = useRef(onCameraChange);
   onCameraChangeRef.current = onCameraChange;
 
@@ -154,17 +224,20 @@ export default function StreetCam({
       onCameraChangeRef.current(null);
       return;
     }
+    const base = `/api/cameras/${encodeURIComponent(segmentId)}/${encodeURIComponent(activeCamera.camera_id)}`;
     onCameraChangeRef.current({
       segment_id: segmentId,
       camera_id: activeCamera.camera_id,
       name: activeCamera.name,
       distance_m: activeCamera.distance_m,
-      snapshot_path: `/api/cameras/${encodeURIComponent(segmentId)}/${encodeURIComponent(activeCamera.camera_id)}/snapshot`,
+      snapshot_path: `${base}/snapshot`,
+      frame_path: `${base}/frame`,
       source_page: source,
       stream_source: streamSource,
       mode: isHls ? "hls" : "snapshot",
+      capture: captureFrame,
     });
-  }, [activeCamera, segmentId, source, streamSource, isHls]);
+  }, [activeCamera, segmentId, source, streamSource, isHls, captureFrame]);
 
   const reconnect = () => {
     setNonce(Date.now());
@@ -238,6 +311,7 @@ export default function StreetCam({
             ) : (
               <img
                 key={imageUrl}
+                ref={imageRef}
                 src={imageUrl}
                 alt={`${activeCamera.name} 即時影像`}
                 className="w-full h-full object-contain"

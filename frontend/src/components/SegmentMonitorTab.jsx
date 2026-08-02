@@ -52,6 +52,8 @@ function nowStamp() {
  * 報告節點在螢幕上是隱藏的，直接寫 <img src="/api/..."> 有機會在列印對話框開啟時
  * 還沒下載完，印出來就是空框。改成先抓成 data URL，確認拿到畫面才進列印流程。
  * 端點是後端同源代理，不論鏡頭是直播或快照模式都取得到單張畫面。
+ *
+ * 這是退路：報告優先採用螢幕實際畫面的截圖（見 captureScreenSnapshot）。
  */
 async function loadSnapshotDataUrl(path) {
   const res = await fetch(`${path}?_=${Date.now()}`);
@@ -63,6 +65,55 @@ async function loadSnapshotDataUrl(path) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+}
+
+/** 這一幀的畫面來源狀態，用於在報告誠實標注（合成示意畫面不得標成真實影像）。 */
+async function loadFrameInfo(path) {
+  if (!path) return null;
+  try {
+    const res = await fetch(`${path}?_=${Date.now()}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 取得報告要嵌入的路段影像。
+ *
+ * 順序有意義：
+ *   1. 截取螢幕上正在播放的那一幀 — 報告與值班人員當下看到的畫面完全一致，
+ *      HLS 直播鏡頭也因此拿到真正的直播畫面，而不是來源不同的另一張靜態快照。
+ *   2. 截圖不可用時（尚未解碼、canvas 被跨來源污染）才退回後端 /snapshot 代理。
+ *
+ * 一併回傳來源標注資訊，讓報告能區分「真實現地影像」與「系統合成示意畫面」。
+ */
+async function resolveReportSnapshot(camera) {
+  if (!camera) return { dataUrl: null, meta: null };
+
+  const captured = typeof camera.capture === "function" ? camera.capture() : null;
+  if (captured?.dataUrl) {
+    return { dataUrl: captured.dataUrl, meta: captured };
+  }
+
+  if (!camera.snapshot_path) return { dataUrl: null, meta: null };
+
+  const [dataUrl, info] = await Promise.all([
+    loadSnapshotDataUrl(camera.snapshot_path),
+    loadFrameInfo(camera.frame_path),
+  ]);
+
+  return {
+    dataUrl,
+    meta: {
+      method: "proxy",
+      mode: camera.mode || "snapshot",
+      is_mock: Boolean(info?.is_mock),
+      captured_at: info?.captured_at || null,
+      age_seconds: info?.age_seconds ?? null,
+    },
+  };
 }
 
 /**
@@ -128,15 +179,17 @@ export default function SegmentMonitorTab({
     setExportError("");
     try {
       let snapshotDataUrl = null;
-      if (camera?.snapshot_path) {
-        try {
-          snapshotDataUrl = await loadSnapshotDataUrl(camera.snapshot_path);
-        } catch {
-          // 影像取不到不該擋住整份報告，報告內會註明無可用影像
-          snapshotDataUrl = null;
-        }
+      let snapshotMeta = null;
+      try {
+        const shot = await resolveReportSnapshot(camera);
+        snapshotDataUrl = shot.dataUrl;
+        snapshotMeta = shot.meta;
+      } catch {
+        // 影像取不到不該擋住整份報告，報告內會註明無可用影像
+        snapshotDataUrl = null;
+        snapshotMeta = null;
       }
-      setReportBundle({ snapshotDataUrl, generatedAt: nowStamp() });
+      setReportBundle({ snapshotDataUrl, snapshotMeta, generatedAt: nowStamp() });
     } catch (err) {
       setExportError(err?.message || "報告產製失敗");
     } finally {
@@ -304,6 +357,7 @@ export default function SegmentMonitorTab({
           aiSummary={alertSummary}
           camera={camera}
           snapshotDataUrl={reportBundle.snapshotDataUrl}
+          snapshotMeta={reportBundle.snapshotMeta}
           generatedAt={reportBundle.generatedAt}
           triggerSegmentNames={triggerSegmentNames}
         />
