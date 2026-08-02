@@ -63,12 +63,8 @@ export default function App() {
             <div className="bg-[var(--primary)] p-2 rounded-lg">
               <Shield className="w-5 h-5 text-[var(--primary-foreground)]" />
             </div>
+            {/* 模擬時間不在標題旁重複顯示：時間軸的播放頭讀數（含秒）才是唯一來源 */}
             <h1 className="text-lg font-bold">城市應變指揮官</h1>
-            {network.timestamp && (
-              <span className="text-xs font-mono text-[var(--muted-foreground)]">
-                {network.timestamp}
-              </span>
-            )}
           </div>
 
           <nav className="flex gap-1" aria-label="主要功能">
