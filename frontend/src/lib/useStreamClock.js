@@ -182,6 +182,9 @@ export default function useStreamClock() {
 
   const togglePlay = useCallback(() => setPlaying((playing) => !playing), []);
 
+  /** 明確暫停（不論當前狀態）：穿透到路段監控時要凍結時間，不能用 togglePlay。 */
+  const pause = useCallback(() => setPlaying(false), []);
+
   return {
     ready,
     error,
@@ -211,6 +214,7 @@ export default function useStreamClock() {
     seekToOffset,
     skipMinutes,
     togglePlay,
+    pause,
     goLive,
   };
 }
